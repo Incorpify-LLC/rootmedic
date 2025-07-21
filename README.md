@@ -1,24 +1,3 @@
-# core-agentnc
-Agent which would be our source to scanning logs and getting a resolution from AI - deciding what to do with that.
-
-Purpose -
-Autonomous Healing Scripts for AIM AI Agent on Linux Systems
-
-How to collect logs -
-1. Evaluate syslog
-
-How to Debug an Issue -
-1. Take AI assistance Open AI and execute the commands and refer them to AI. Let the AI do most of the things.
-
-How to go about remediations - 
-1. Ask a human and then go do it
-2. Always let Human do it after review/changes
-3. Always do it without asking humans - keep a rollback script ready and also send alert
-
-
-Deep Research from chatgpt -
-
-
 # AI-Driven Log Analysis and Autonomous Remediation for Linux Systems
 
 ## Concept Overview: Self-Healing Linux OS via Centralized Log Analytics
@@ -98,3 +77,10 @@ To summarize the validation: **yes, the project is valid and worth pursuing.** I
 * Even open-source tools are emerging to apply LLMs to logs and incident management, confirming that the community sees this as the next logical step.
 
 By studying these existing implementations, you can avoid pitfalls and perhaps build a solution that integrates the best of both worlds: the sophisticated reasoning of LLMs with the reliability of rule-based automation. With careful design for safety and correctness, an **autonomous Linux troubleshooter** could dramatically reduce downtime and administrative toil. In the words of one industry report, AIOps ultimately aims to *“shift IT operations from reactive to proactive,”* and your project could push it one step further to **autonomous**. It's an exciting space, and your idea is right on the cutting edge of it.
+
+
+# How to go about remediations - 
+1. Ask a human and then go do it
+2. Always let Human do it after review/changes
+3. Always do it without asking humans - keep a rollback script ready and also send alert
+
