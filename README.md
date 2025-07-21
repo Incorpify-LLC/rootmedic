@@ -101,7 +101,7 @@ By studying these existing implementations, you can avoid pitfalls and perhaps b
 | python  | AI agents (future integration)          | MIT/Apache                        |
 
 ## System Design (ASCII Diag)
-                    
+### Aggregation Part
 ```text                    
                     +-----------------+
                     |  Grafana UI     |
@@ -125,6 +125,36 @@ By studying these existing implementations, you can avoid pitfalls and perhaps b
             v
       Inventory: inventory.ini
 ```
+### AI Part
+```text
+      +---------------------+
+      | journalctl warnings |
+      | & errors (Promtail) |
+      +----------+----------+
+                 |
+                 v
+    +------------+-------------+
+    |  Log Analyzer Agent      |
+    | (parses, filters context)|
+    +------------+-------------+
+                 |
+ +---------------+-------------------+
+ |                                   |
+ v                                   v
+ +------------+                  +-----------------+
+ | Vector DB  | <--- retrieval --> |  OpenAI / LLM    |
+ | (FAISS/Qdrant)                |  fallback (RAG)  |
+ +------------+                  +-----------------+
+        |                                 |
+        |        +------------------------+
+        |        |
+        v        v
++--------------------------+           +---------------------------+
+| Bash/Python Remediator   |           | Human-in-the-loop (Audit) |
+| (restart, clean, revert) |           +---------------------------+
++--------------------------+
+```
+
 
 ## How to go about remediations - 
 1. Ask a human and then go do it
