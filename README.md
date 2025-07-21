@@ -78,8 +78,53 @@ To summarize the validation: **yes, the project is valid and worth pursuing.** I
 
 By studying these existing implementations, you can avoid pitfalls and perhaps build a solution that integrates the best of both worlds: the sophisticated reasoning of LLMs with the reliability of rule-based automation. With careful design for safety and correctness, an **autonomous Linux troubleshooter** could dramatically reduce downtime and administrative toil. In the words of one industry report, AIOps ultimately aims to *“shift IT operations from reactive to proactive,”* and your project could push it one step further to **autonomous**. It's an exciting space, and your idea is right on the cutting edge of it.
 
+# Project design
+## We are zeroing onto promtail for log collection. 
+* System logs (journalctl)
+* Log levels: error and warning
+* Autonomous remediation planned later via AI/LLM integration
 
-# How to go about remediations - 
+## The core stack:
+🐧 Promtail agents on each Linux system
+📡 Push logs to Loki
+📊 Visualize and query logs via Grafana
+🧠 Future: integrate AI models (LLM) for RCA & automated fixes
+
+## tools and components
+
+| Component | Role                                    | License                           |
+| --------- | --------------------------------------- | --------------------------------- |
+| Promtail  | Collect and push logs                   | Apache 2.0                        |
+| Loki      | Log aggregation and storage backend     | Apache 2.0                        |
+| Grafana   | Log query & visualization dashboard     | AGPLv3 (but self-hosted usage OK) |
+| Ansible   | Automate Promtail setup on remote nodes | GPL                               |
+| Optional  | AI agents (future integration)          | MIT/Apache                        |
+
+## System Design (ASCII Diag)
+                 +-----------------+
+                 |  Grafana UI     |
+                 | (Log Explorer)  |
+                 +--------+--------+
+                          |
+                 +--------v--------+
+                 |     Loki        |  <--- Log storage (7d retention)
+                 +--------+--------+
+                          ^
+       +------------------+---------------------+
+       |                                        |
++------v-------+                        +-------v------+
+|  Promtail    |                        |  Promtail     |
+|  (Host A)    |                        |  (Host B)     |
+|  /var/log/journal                     |  /var/log/journal
+|  Filters: Error, Warning              |  Filters: Error, Warning
++--------------+                       +---------------+
+         |
+         | Ansible-deployed with config + systemd
+         v
+   Inventory: inventory.ini
+
+
+## How to go about remediations - 
 1. Ask a human and then go do it
 2. Always let Human do it after review/changes
 3. Always do it without asking humans - keep a rollback script ready and also send alert
