@@ -85,10 +85,10 @@ By studying these existing implementations, you can avoid pitfalls and perhaps b
 * Autonomous remediation planned later via AI/LLM integration
 
 ## The core stack:
-🐧 Promtail agents on each Linux system
-📡 Push logs to Loki
-📊 Visualize and query logs via Grafana
-🧠 Future: integrate AI models (LLM) for RCA & automated fixes
+* Promtail agents on each Linux system
+* Push logs to Loki
+* Visualize and query logs via Grafana
+* Future: integrate AI models (LLM) for RCA & automated fixes
 
 ## tools and components
 
@@ -98,7 +98,7 @@ By studying these existing implementations, you can avoid pitfalls and perhaps b
 | Loki      | Log aggregation and storage backend     | Apache 2.0                        |
 | Grafana   | Log query & visualization dashboard     | AGPLv3 (but self-hosted usage OK) |
 | Ansible   | Automate Promtail setup on remote nodes | GPL                               |
-| Optional  | AI agents (future integration)          | MIT/Apache                        |
+| python  | AI agents (future integration)          | MIT/Apache                        |
 
 ## System Design (ASCII Diag)
                     
