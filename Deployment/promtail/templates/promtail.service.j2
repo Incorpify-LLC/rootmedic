@@ -1,0 +1,10 @@
+[Unit]
+Description=Promtail log forwarder
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/promtail -config.file=/etc/promtail/promtail-config.yml
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

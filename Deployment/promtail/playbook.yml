@@ -1,0 +1,54 @@
+---
+- name: Install Promtail on Linux hosts
+  hosts: all
+  become: yes
+  vars:
+    promtail_version: "2.9.0"
+    loki_url: "http://<CENTRAL_LOKI_IP>:3100/loki/api/v1/push"
+
+  tasks:
+
+    - name: Ensure unzip is installed
+      apt:
+        name: unzip
+        state: present
+      when: ansible_facts['os_family'] == "Debian"
+
+    - name: Download Promtail binary zip
+      get_url:
+        url: "https://github.com/grafana/loki/releases/download/v{{ promtail_version }}/promtail-linux-amd64.zip"
+        dest: "/tmp/promtail.zip"
+
+    - name: Unzip Promtail binary
+      unarchive:
+        src: "/tmp/promtail.zip"
+        dest: "/usr/local/bin/"
+        remote_src: yes
+        mode: '0755'
+
+    - name: Create Promtail config directory
+      file:
+        path: /etc/promtail
+        state: directory
+
+    - name: Upload Promtail config
+      copy:
+        src: files/promtail-config.yml
+        dest: /etc/promtail/promtail-config.yml
+        mode: '0644'
+
+    - name: Install Promtail systemd service
+      template:
+        src: templates/promtail.service.j2
+        dest: /etc/systemd/system/promtail.service
+        mode: '0644'
+
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start Promtail
+      systemd:
+        name: promtail
+        enabled: yes
+        state: started
