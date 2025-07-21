@@ -101,28 +101,30 @@ By studying these existing implementations, you can avoid pitfalls and perhaps b
 | Optional  | AI agents (future integration)          | MIT/Apache                        |
 
 ## System Design (ASCII Diag)
-                 +-----------------+
-                 |  Grafana UI     |
-                 | (Log Explorer)  |
-                 +--------+--------+
-                          |
-                 +--------v--------+
-                 |     Loki        |  <--- Log storage (7d retention)
-                 +--------+--------+
-                          ^
-       +------------------+---------------------+
-       |                                        |
-+------v-------+                        +-------v------+
-|  Promtail    |                        |  Promtail     |
-|  (Host A)    |                        |  (Host B)     |
-|  /var/log/journal                     |  /var/log/journal
-|  Filters: Error, Warning              |  Filters: Error, Warning
-+--------------+                       +---------------+
-         |
-         | Ansible-deployed with config + systemd
-         v
-   Inventory: inventory.ini
-
+                    
+```text                    
+                    +-----------------+
+                    |  Grafana UI     |
+                    | (Log Explorer)  |
+                    +--------+--------+
+                             |
+                    +--------v--------+
+                    |     Loki        |  <--- Log storage (7d retention)
+                    +--------+--------+
+                             ^
+          +------------------+--------------------------+
+          |                                             |
+   +------v-------------------+            +------------v-------------+
+   |  Promtail                |            |  Promtail                |
+   |  (Host A)                |            |  (Host B)                |
+   |  /var/log/journal        |            |  /var/log/journal        |
+   |  Filters: Error, Warning |            |  Filters: Error, Warning | 
+   +--------------------------+            +--------------------------+
+            |
+            | Ansible-deployed with config + systemd
+            v
+      Inventory: inventory.ini
+```
 
 ## How to go about remediations - 
 1. Ask a human and then go do it
