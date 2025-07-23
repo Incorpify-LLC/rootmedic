@@ -1,6 +1,6 @@
 # AI-Driven Log Analyzer. RCA and Remediation System
 
-This document outlines the architecture and implementation plan for an agent-based system that collects logs and system metrics, analyzes issues via AI, and performs remediation actions with learning feedback loops.
+This document outlines a secure, scalable design for per-client agent-based system log analysis, AI-driven RCA, plugin-based alerting, and long-term RCA archival with strong security practices.
 
 ---
 
@@ -34,10 +34,131 @@ This document outlines the architecture and implementation plan for an agent-bas
 | (restart, clean, revert) |           +---------------------------+
 +--------------------------+
 ```
+---
+
+## Key Principles
+
+- RCA (Root Cause Analysis) is the **core outcome**, not auto-remediation
+- Remediation is **recommended only** — never run without user approval (Rollback is also provided)
+- Alerts are delivered via **plugin-based channels**
+- All core services are **containerized** and optionally **Kubernetes-deployable**
+- Designed for **per-client deployments** (no shared SaaS)
+- Log, RCA, and rollback records are archived with **tiered retention**
+- All data transfers and storage are **secured with encryption**
 
 ---
 
-## ✅ Agent Workflow
+## Secure Design & Encryption
+
+| Concern                 | Practice                                   |
+|-------------------------|--------------------------------------------|
+| Logs in transit         | 🔐 TLS/mTLS for Alloy → Loki, RCA → Qdrant |
+| Secrets in logs         | ✂️ Redacted via regex or LLM sanitizer     |
+| AuthN/AuthZ             | 🔐 Certs or JWT tokens per agent           |
+| Data at rest            | 🔐 Encrypted volumes + object storage      |
+| Config secrets          | 🔐 Stored via Vault/sops/SealedSecrets     |
+| API access              | 🔐 Scoped keys, periodic rotation          |
+
+---
+
+### TLS & mTLS Deployment Model
+
+```text
++-----------------------+
+|    Client Node        |
+|  [Alloy Agent]        |
+|  TLS → Log Gateway    |
++----------+------------+
+           |
+           v (TLS/mTLS)
++-----------------------+
+|  Log Aggregator (Loki)|
+|  RCA + Qdrant         |
+|  Secret Manager (Vault|
++-----------------------+
+           |
+     +-----+-----+
+     |   Alerting  |
+     |  (via plugins |
+     +-------------+
+           |
+           v (HTTPS)
+     Slack, Webhook, Email
+```
+
+---
+
+## Where Each Component Runs
+
+| Component                       | Host / Mode                         | Notes                                        |
+|---=-----------------------------|-------------------------------------|--------=-------------------------------------|
+| Alloy Agent                     | Every node (DC or cloud)            | Logs + system metrics + BMC/IPMI optional    |
+| RCA Stack (Loki, Qdrant, Agent) | Central VM or K8s deployment        | Scales horizontally, supports failover       |
+| Remediator Output               | YAML or Web Portal                  | Requires human approval                      |
+| OpenAI LLM                      | Cloud (configurable)                | Optional fallback; can be replaced by Ollama |
+| Long-Term Archive               | Object Storage (S3, MinIO, etc.)    | Tiered retention: 30d / 6mo / 12mo           |
+
+---
+
+## Plugin-Based Alerting System
+
+Each plugin receives:
+- Incident summary
+- RCA details
+- Suggested fix
+- Optional link to full history
+
+Implementation details will be followed
+---
+
+## RCA + Agent Workflow
+1. Normalize logs from Alloy
+2. Embed via OpenAI or local model
+3. Search Qdrant for similar issues
+4. If no match, fallback to OpenAI
+5. Save RCA result and suggestion
+6. Generate `remediation.yaml` (not auto-executed)
+
+---
+
+## Retention & Audit Trail
+
+- Logs + RCA + rollback saved in structured format
+- Archived to object storage:
+  ```
+  /client-id/yyyy-mm/incident-UUID/
+  ```
+- Configurable tiers:
+  - Free: 30 days
+  - Pro: 6 months
+  - Enterprise: 12 months
+
+---
+
+## Deployment Flexibility
+
+| Mode               | Tools                         | Usage                          |
+|--------------------|-------------------------------|--------------------------------|
+| Simple install     | Docker Compose                | Default for most users         |
+| Scalable install   | Kubernetes + Helm chart       | For large clients              |
+| Failover-ready     | K8s StatefulSets, Services    | Elastic, HA possible           |
+| Air-gapped option  | Replace OpenAI with Ollama    | Fully offline RCA capability   |
+
+All services (Qdrant, Loki, RCA, Alerting) are containerized.
+
+---
+
+## Metric Sources
+
+| Source        | Method                           |
+|---------------|----------------------------------|
+| CPU, RAM, Disk| Alloy + node_exporter            |
+| BMC/IPMI      | Redfish, `ipmitool`, sensors     |
+| NIC           | ethtool, /sys/class/net          |
+| Thermal       | lm-sensors, `/sys/class/thermal` |
+| RAID/Disks    | smartctl, nvme-cli               |
+
+---
 
 ### Phase 1: Log Collection and Normalization
 - Use **Alloy** to collect `journalctl` logs (errors and warnings)
@@ -69,7 +190,7 @@ This document outlines the architecture and implementation plan for an agent-bas
 ## Observability Stack Design
 
 | Component       | Tool     | Purpose                                       |
-|----------------|----------|-----------------------------------------------|
+|-----------------|----------|-----------------------------------------------|
 | Log Shipper     | Alloy    | Collects structured system logs               |
 | Log Storage     | Loki     | Retains and indexes logs                      |
 | Metric Agent    | Alloy    | Collects CPU/RAM/Disk/Net metrics             |
@@ -80,8 +201,8 @@ This document outlines the architecture and implementation plan for an agent-bas
 
 ## Why Alloy over Telegraf or Promtail?
 
-| Feature              | Alloy           | Promtail / Telegraf |
-|----------------------|------------------|----------------------|
+| Feature              | Alloy             | Promtail / Telegraf   |
+|----------------------|-------------------|-----------------------|
 | Logs collection      | ✅ Unified        | ✅ Separate tools     |
 | System metrics       | ✅ Built-in       | ❌ Promtail only logs |
 | Label enrichment     | ✅ Yes            | ❌ Basic              |
@@ -132,17 +253,24 @@ metrics:
 
 ## Roadmap
 
-1. Loki + Alloy setup
-2. Vector DB (Qdrant)
-3. Python log parser + embedder
-4. RCA fallback via OpenAI
-5. CLI agent & Remediator script
-6. UI & Audit dashboard
+1. ✅ Basic agent + Loki log shipper
+2. ✅ Qdrant + embedding setup
+3. ✅ RCA agent with fallback logic
+4. ✅ Remediator YAML generator
+5. ✅ Plugin alerting system
+6. ✅ Object storage archiver
+7. ✅ TLS/mTLS configuration and redactor
+8. ⏳ Optional dashboard
+9. ⏳ Helm/K8s packaging
 
 ---
 
 ## License
 
-- Alloy: Apache 2.0
-- Qdrant: Apache 2.0
-- OpenAI: API-licensed
+## License
+
+- Alloy: Apache 2.0  
+- Loki: AGPL  
+- Qdrant: Apache 2.0  
+- Custom Code: Apache/MIT recommended  
+
