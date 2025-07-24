@@ -90,6 +90,8 @@ This document outlines a secure, scalable design for per-client agent-based syst
 
 ## Where Each Component Runs
 
+```text
+
 | Component                       | Host / Mode                         | Notes                                        |
 |---=-----------------------------|-------------------------------------|--------=-------------------------------------|
 | Alloy Agent                     | Every node (DC or cloud)            | Logs + system metrics + BMC/IPMI optional    |
@@ -98,6 +100,7 @@ This document outlines a secure, scalable design for per-client agent-based syst
 | OpenAI LLM                      | Cloud (configurable)                | Optional fallback; can be replaced by Ollama |
 | Long-Term Archive               | Object Storage (S3, MinIO, etc.)    | Tiered retention: 30d / 6mo / 12mo           |
 
+```
 ---
 
 ## Plugin-Based Alerting System
