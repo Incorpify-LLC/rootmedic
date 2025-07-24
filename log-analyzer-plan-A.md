@@ -8,16 +8,22 @@ This document outlines a secure, scalable design for per-client agent-based syst
 
 ```text
       +---------------------+
+      |      client         |
+      |  python-rca-agent + |
       | journalctl warnings |
       | & errors (Alloy)    |
       +----------+----------+
+                 ^
                  |
                  v
     +------------+-------------+
     |  Log Analyzer Agent      |
     | (parses, filters context)|
+    |    RCA logical unit      |
     +------------+-------------+
+                 ^
                  |
+                 v
  +---------------+-------------------+
  |                                   |
  v                                   v
@@ -34,6 +40,21 @@ This document outlines a secure, scalable design for per-client agent-based syst
 | (restart, clean, revert) |           +---------------------------+
 +--------------------------+
 ```
+---
+
+## RCA Pipeline Summary
+
+| Step | Description |
+|------|-------------|
+| 1.   | Alloy detects error/warning or metric breach |
+| 2.   | RCA Core checks Qdrant for similar vector |
+| 3.   | If uncertain, queries TLS RCA Agent |
+| 4.   | RCA Agent executes diagnostic command (read-only) |
+| 5.   | Output embedded into prompt for OpenAI |
+| 6.   | RCA + remediation YAML generated |
+| 7.   | Human notified (no auto-action by default) |
+| 8.   | Results archived securely for learning & audit |
+
 ---
 
 ## Key Principles
@@ -64,26 +85,35 @@ This document outlines a secure, scalable design for per-client agent-based syst
 ### TLS & mTLS Deployment Model
 
 ```text
-+-----------------------+
-|    Client Node        |
-|  [Alloy Agent]        |
-|  TLS → Log Gateway    |
-+----------+------------+
-           |
-           v (TLS/mTLS)
-+-----------------------+
-|  Log Aggregator (Loki)|
-|  RCA + Qdrant         |
-|  Secret Manager (Vault|
-+-----------------------+
-           |
-     +-----+-----+
-     |   Alerting  |
-     |  (via plugins |
-     +-------------+
-           |
-           v (HTTPS)
-     Slack, Webhook, Email
+ [ Logs & Metrics ]
+         +--------------+
+         |   Alloy      |  <-- journald/syslog/cpu/mem/disk/bmc
+         +------+-------+
+                |
+                v
+         +------+---------+
+         |  Loki          |   <-- TLS secured storage & search
+         +----------------+
+                +
+                |
+                v
+     +----------+-----------+
+     | RCA Diagnostic Agent |
+     | (TLS-secured Python) |
+     +----------+-----------+
+                |
+                v
++-----------------------------+
+| RCA Core (LLM + Vector DB) |
+|   Qdrant + OpenAI RAG      |
++-------------+---------------+
+              |
+              v
++------------------------------+
+| Suggested RCA + Rollback    |
+| JSON/YAML + Alert Plugin    |
+| Slack, Email, IRC, Webhook  |
++------------------------------+
 ```
 
 ---
@@ -102,6 +132,19 @@ This document outlines a secure, scalable design for per-client agent-based syst
 
 ```
 ---
+
+## RCA Diagnostic Agent (TLS-secured Python Service)
+
+To support intelligent real-time diagnostics, a TLS-secured, lightweight RCA Diagnostic Agent runs on **each monitored machine**. This agent facilitates safe, encrypted, read-only inspection of system state as part of the RCA workflow.
+
+### Capabilities
+- **Receives commands over HTTPS (TLS-enabled)** via local port or UNIX socket
+- Executes only **whitelisted**, read-only diagnostics:
+  - `ps aux --sort=-%mem | head`
+  - `du -sh /*`
+  - `systemctl status <svc>`
+  - `netstat`, `df -h`, `lsof`, `uptime`, etc.
+- Returns output as structured JSON for vector embedding or LLM prompt
 
 ## Plugin-Based Alerting System
 
