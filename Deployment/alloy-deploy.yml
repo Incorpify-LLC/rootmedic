@@ -1,0 +1,92 @@
+---
+- name: Deploy Alloy log and metric collector
+  hosts: all
+  become: yes
+  vars:
+    alloy_version: v1.0.0
+    alloy_user: alloy
+    alloy_install_dir: /opt/alloy
+    alloy_config_path: /etc/alloy/alloy-config.yaml
+    alloy_service_path: /etc/systemd/system/alloy.service
+    alloy_bin_url: "https://github.com/grafana/alloy/releases/download/{{ alloy_version }}/alloy-linux-amd64.zip"
+
+  tasks:
+    - name: Ensure unzip and curl are installed
+      apt:
+        name:
+          - unzip
+          - curl
+        state: present
+
+    - name: Create Alloy user
+      user:
+        name: "{{ alloy_user }}"
+        shell: /usr/sbin/nologin
+        create_home: no
+        system: yes
+
+    - name: Create necessary directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ alloy_user }}"
+        group: "{{ alloy_user }}"
+        mode: "0755"
+      loop:
+        - "{{ alloy_install_dir }}"
+        - "/etc/alloy"
+
+    - name: Download Alloy zip
+      get_url:
+        url: "{{ alloy_bin_url }}"
+        dest: /tmp/alloy.zip
+
+    - name: Extract Alloy
+      unarchive:
+        src: /tmp/alloy.zip
+        dest: "{{ alloy_install_dir }}"
+        remote_src: yes
+
+    - name: Make binary executable
+      file:
+        path: "{{ alloy_install_dir }}/alloy-linux-amd64"
+        mode: '0755'
+        owner: "{{ alloy_user }}"
+        group: "{{ alloy_user }}"
+
+    - name: Symlink to /usr/local/bin
+      file:
+        src: "{{ alloy_install_dir }}/alloy-linux-amd64"
+        dest: /usr/local/bin/alloy
+        state: link
+
+    - name: Copy Alloy configuration
+      copy:
+        src: files/alloy-config.yaml
+        dest: "{{ alloy_config_path }}"
+        owner: "{{ alloy_user }}"
+        group: "{{ alloy_user }}"
+        mode: "0644"
+
+    - name: Create systemd service
+      copy:
+        dest: "{{ alloy_service_path }}"
+        content: |
+          [Unit]
+          Description=Alloy log and metric collector
+          After=network.target
+
+          [Service]
+          ExecStart=/usr/local/bin/alloy --config.file={{ alloy_config_path }}
+          User={{ alloy_user }}
+          Restart=on-failure
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Enable and start Alloy
+      systemd:
+        daemon_reload: yes
+        name: alloy
+        enabled: yes
+        state: started
