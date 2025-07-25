@@ -1,0 +1,36 @@
+server:
+  log_level: info
+  http_listen_address: 0.0.0.0
+  http_listen_port: 12345
+
+metrics:
+  global:
+    scrape_interval: 30s
+
+  receivers:
+    host_metrics:
+      type: host
+      collection_interval: 30s
+
+  exporters:
+    prometheus:
+      endpoint: 0.0.0.0:12390
+
+logs:
+  receivers:
+    journald:
+      type: journald
+      priority: warning
+
+  exporters:
+    loki:
+      endpoint: https://192.168.1.113:3100/loki/api/v1/push
+      labels:
+        job: "system"
+        host: "{{ inventory_hostname }}"
+
+  service:
+    pipelines:
+      logs:
+        receivers: [journald]
+        exporters: [loki]
