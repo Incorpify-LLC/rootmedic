@@ -1,6 +1,7 @@
 import requests
 import datetime
 import json
+import time
 
 # CONFIGURATION
 LOKI_URL = "http://localhost:3100/loki/api/v1/query_range"
