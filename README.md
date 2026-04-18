@@ -1,5 +1,5 @@
 # core-agentnc
-An agent which would be our source to scanning logs and getting a resolution from AI - deciding what to do with that.
+agent which would be our source to scanning logs and getting a resolution from AI - deciding what to do with that.
 
 Purpose -
 Autonomous Healing Scripts for AIM AI Agent on Linux Systems
