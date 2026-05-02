@@ -1,0 +1,42 @@
+# Python virtual environment
+.venv/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Remediation engine runtime artifacts
+remediation_state.json
+dry_run.log
+.rollback_snapshots/
+
+# Generated / sample data
+user_database.db
+
+# Deployment binary artifacts
+Deployment/promtail/packages/
+
+# IDE and editor configs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python packaging
+*.egg-info/
+dist/
+build/
+
+# Local tool configs (Codex, Continue)
+.agents/
+.codex/
+.continue/
+
+# Stray / misc
+home/

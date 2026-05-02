@@ -1,56 +1,143 @@
-import requests
+"""RootMedic agent: fetch logs from Loki, normalize, and feed into the
+graduated autonomy remediation engine.
+"""
+
 import datetime
 import json
-import time
 
-# CONFIGURATION
+from remediation_engine import (
+    RemediationEngine,
+    RemediationPlan,
+    fingerprint_issue,
+)
+
+# --- Configuration -----------------------------------------------------------
 LOKI_URL = "http://localhost:3100/loki/api/v1/query_range"
 QUERY = '{job="systemd-journal"} |= "error" or |= "warning"'
 LIMIT = 100
-DURATION = "1h"  # logs from the past hour
 
-def fetch_logs():
-    now = datetime.datetime.utcnow()
+
+def fetch_logs(loki_url: str = LOKI_URL, query: str = QUERY, limit: int = LIMIT):
+    """Query Loki for recent error/warning log entries."""
+    import requests
+
+    now = datetime.datetime.now(datetime.timezone.utc)
     end = int(now.timestamp() * 1e9)
     start = int((now - datetime.timedelta(hours=1)).timestamp() * 1e9)
 
     params = {
-        "query": QUERY,
-        "limit": LIMIT,
+        "query": query,
+        "limit": limit,
         "start": start,
         "end": end,
-        "direction": "backward"
+        "direction": "backward",
     }
 
-    print(f"Querying Loki for logs between {start} and {end}...")
-
     try:
-        response = requests.get(LOKI_URL, params=params)
+        response = requests.get(loki_url, params=params, timeout=10)
         response.raise_for_status()
-        data = response.json()
-        return data.get('data', {}).get('result', [])
-    except Exception as e:
-        print(f"Error querying Loki: {e}")
+        return response.json().get("data", {}).get("result", [])
+    except Exception as exc:
+        print(f"Error querying Loki: {exc}")
         return []
 
+
 def parse_and_normalize(logs):
+    """Convert raw Loki stream entries into structured events."""
     events = []
     for stream in logs:
-        for entry in stream.get('values', []):
-            ts, raw_message = entry
-            msg = raw_message.strip()
+        stream_labels = stream.get("stream", {})
+        for entry in stream.get("values", []):
+            ts_ns, raw_message = entry
             events.append({
-                "timestamp": datetime.datetime.fromtimestamp(int(ts) / 1e9).isoformat(),
-                "host": stream.get('stream', {}).get('host', 'unknown'),
-                "unit": stream.get('stream', {}).get('systemd_unit', 'unknown'),
-                "message": msg
+                "timestamp": datetime.datetime.fromtimestamp(
+                    int(ts_ns) / 1e9, tz=datetime.timezone.utc
+                ).isoformat(),
+                "host": stream_labels.get("host", "unknown"),
+                "unit": stream_labels.get("systemd_unit", "unknown"),
+                "message": raw_message.strip(),
             })
     return events
 
-def main():
+
+def build_remediation_plan(event: dict, engine: RemediationEngine) -> RemediationPlan | None:
+    """Produce a RemediationPlan for a single normalized log event.
+
+    In production this would call the LLM; here a rule-based stub
+    demonstrates the pipeline.
+    """
+    msg_lower = event["message"].lower()
+    fp = fingerprint_issue(event["message"], event["unit"])
+
+    # --- Simple rule-based dispatch ------------------------------------------
+    if "connection refused" in msg_lower:
+        return RemediationPlan(
+            issue_fingerprint=fp,
+            description="Restart service after upstream connection refusal",
+            commands=[f"systemctl restart {event['unit']}"],
+            rollback_commands=[
+                f"systemctl stop {event['unit']}",
+                f"systemctl start {event['unit']}",
+            ],
+        )
+
+    if "out of memory" in msg_lower or "oom" in msg_lower:
+        svc = event["unit"]
+        return RemediationPlan(
+            issue_fingerprint=fp,
+            description=f"Restart {svc} and drop caches after OOM",
+            commands=[
+                f"systemctl restart {svc}",
+                "sync && echo 3 > /proc/sys/vm/drop_caches",
+            ],
+            rollback_commands=[f"systemctl stop {svc}", f"systemctl start {svc}"],
+        )
+
+    if "disk full" in msg_lower or "no space" in msg_lower:
+        return RemediationPlan(
+            issue_fingerprint=fp,
+            description="Clean journal logs and apt cache to free disk space",
+            commands=[
+                "journalctl --vacuum-size=200M",
+                "apt-get clean",
+            ],
+            rollback_commands=[],
+        )
+
+    return None  # no plan for unrecognized issues
+
+
+def run_agent():
+    """Main agent loop: fetch → normalize → remediate with graduated autonomy."""
+    engine = RemediationEngine()
     logs = fetch_logs()
-    parsed = parse_and_normalize(logs)
-    print(json.dumps(parsed, indent=2))
+    events = parse_and_normalize(logs)
+
+    if not events:
+        print("No error/warning events found.")
+        return
+
+    results = []
+    for event in events:
+        plan = build_remediation_plan(event, engine)
+        if plan is None:
+            continue
+
+        level, record, confidence = engine.assess(event["message"], event["unit"])
+        plan.confidence = confidence
+
+        print(
+            f"[{event['timestamp']}] {event['host']} "
+            f"{event['unit']} → {level.value.upper()} "
+            f"(conf={confidence:.0%}, seen={record.occurrences}x)"
+        )
+
+        result = engine.execute(plan, level)
+        result["event"] = event
+        results.append(result)
+
+    print(json.dumps(results, indent=2))
+
 
 if __name__ == "__main__":
-    main()
+    run_agent()
