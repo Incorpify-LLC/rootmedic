@@ -1,0 +1,148 @@
+{
+  "dashboard": {
+    "uid": "rootmedic-ci-demo",
+    "title": "RootMedic — Autonomous Healing Dashboard",
+    "tags": ["rootmedic", "autonomous-healing", "ci-cd"],
+    "timezone": "browser",
+    "schemaVersion": 38,
+    "version": 1,
+    "refresh": "10s",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Issues Detected (last 15 min)",
+        "type": "stat",
+        "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "sum(count_over_time({job=\"systemd-journal\"} |~ \"(?i)(error|warning|fail|oom|refused|timeout)\" [15m]))",
+            "legendFormat": "Issues",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "green", "value": null},
+                {"color": "yellow", "value": 1},
+                {"color": "red", "value": 10}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "title": "Autonomy Level Distribution",
+        "type": "piechart",
+        "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "count_over_time({job=\"systemd-journal\"} |~ \"RECOMMEND\" [15m])",
+            "legendFormat": "RECOMMEND",
+            "refId": "A"
+          },
+          {
+            "expr": "count_over_time({job=\"systemd-journal\"} |~ \"SEMI\" [15m])",
+            "legendFormat": "SEMI-AUTONOMOUS",
+            "refId": "B"
+          },
+          {
+            "expr": "count_over_time({job=\"systemd-journal\"} |~ \"FULL\" [15m])",
+            "legendFormat": "FULL-AUTONOMOUS",
+            "refId": "C"
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "title": "Remediation Actions Timeline",
+        "type": "bargauge",
+        "gridPos": {"x": 12, "y": 0, "w": 12, "h": 4},
+        "targets": [
+          {
+            "expr": "count_over_time({job=\"systemd-journal\"} |~ \"applied|rolled_back|recommended\" [1m])",
+            "legendFormat": "Actions",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 4,
+        "title": "Error Log Stream",
+        "type": "logs",
+        "gridPos": {"x": 0, "y": 4, "w": 24, "h": 10},
+        "targets": [
+          {
+            "expr": "{job=\"systemd-journal\"} |~ \"(?i)(error|fail|oom|refused|killed)\"",
+            "refId": "A"
+          }
+        ]
+      },
+      {
+        "id": 5,
+        "title": "Recovery Success Rate",
+        "type": "gauge",
+        "gridPos": {"x": 0, "y": 14, "w": 6, "h": 4},
+        "targets": [
+          {
+            "expr": "sum(count_over_time({job=\"systemd-journal\"} |~ \"applied\" [30m])) / clamp_min(sum(count_over_time({job=\"systemd-journal\"} |~ \"(applied|rolled_back)\" [30m])), 1) * 100",
+            "refId": "A"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "yellow", "value": 75},
+                {"color": "green", "value": 95}
+              ]
+            },
+            "max": 100,
+            "min": 0
+          }
+        }
+      },
+      {
+        "id": 6,
+        "title": "Node Health — Managed Node",
+        "type": "timeseries",
+        "gridPos": {"x": 6, "y": 14, "w": 18, "h": 4},
+        "targets": [
+          {
+            "expr": "rate({job=\"systemd-journal\", host=~\"rootmedic-managed.*\"} |~ \"error\" [5m])",
+            "legendFormat": "Error rate",
+            "refId": "A"
+          },
+          {
+            "expr": "rate({job=\"systemd-journal\", host=~\"rootmedic-managed.*\"} |~ \"recovered|applied\" [5m])",
+            "legendFormat": "Recovery rate",
+            "refId": "B"
+          }
+        ]
+      },
+      {
+        "id": 7,
+        "title": "Fault Injection Events",
+        "type": "annotationslist",
+        "gridPos": {"x": 0, "y": 18, "w": 24, "h": 4},
+        "targets": [
+          {
+            "expr": "{job=\"systemd-journal\"} |~ \"FAULT INJECTION\"",
+            "refId": "A"
+          }
+        ]
+      }
+    ],
+    "time": {
+      "from": "now-30m",
+      "to": "now"
+    }
+  },
+  "overwrite": true
+}

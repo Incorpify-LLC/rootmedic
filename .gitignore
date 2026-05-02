@@ -40,3 +40,7 @@ build/
 
 # Stray / misc
 home/
+
+# CI artifacts
+junit-results.xml
+.pytest_cache/

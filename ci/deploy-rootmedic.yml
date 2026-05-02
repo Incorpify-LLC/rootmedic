@@ -1,0 +1,191 @@
+---
+# Deploy Promtail log shipper + RootMedic agent on the managed node.
+
+- name: Deploy RootMedic agent + Promtail
+  hosts: managed_nodes
+  vars:
+    loki_ip: "192.168.122.101"
+    loki_push_url: "http://{{ loki_ip }}:3100/loki/api/v1/push"
+    loki_query_url: "http://{{ loki_ip }}:3100"
+
+  tasks:
+    # ----------------------------------------------------------- Promtail
+    - name: Install dependencies
+      package:
+        name:
+          - python3
+          - python3-pip
+          - python3-venv
+          - curl
+          - unzip
+        state: present
+
+    - name: Create Promtail directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /opt/promtail
+        - /etc/promtail
+
+    - name: Download Promtail binary
+      get_url:
+        url: "https://github.com/grafana/loki/releases/download/v2.9.0/promtail-linux-amd64.zip"
+        dest: /tmp/promtail.zip
+
+    - name: Extract Promtail
+      unarchive:
+        src: /tmp/promtail.zip
+        dest: /usr/local/bin/
+        remote_src: yes
+        mode: '0755'
+
+    - name: Create Promtail config
+      copy:
+        dest: /etc/promtail/promtail-config.yml
+        content: |
+          server:
+            http_listen_port: 9080
+            grpc_listen_port: 0
+
+          positions:
+            filename: /var/lib/promtail/positions.yaml
+
+          clients:
+            - url: {{ loki_push_url }}
+
+          scrape_configs:
+            - job_name: journal
+              journal:
+                path: /var/log/journal
+                labels:
+                  job: systemd-journal
+                  host: managed-node
+              relabel_configs:
+                - source_labels: ['__journal__priority']
+                  regex: '4|3'
+                  action: keep
+
+    - name: Install Promtail systemd service
+      copy:
+        dest: /etc/systemd/system/promtail.service
+        content: |
+          [Unit]
+          Description=Promtail log forwarder
+          After=network.target
+
+          [Service]
+          ExecStart=/usr/local/bin/promtail-linux-amd64 -config.file=/etc/promtail/promtail-config.yml
+          Restart=always
+          User=rootmedic
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Start Promtail
+      systemd:
+        name: promtail
+        enabled: yes
+        state: started
+        daemon_reload: yes
+
+    # ----------------------------------------------------------- RootMedic
+    - name: Create RootMedic directory
+      file:
+        path: /opt/rootmedic
+        state: directory
+        mode: '0755'
+
+    - name: Sync repo to managed node
+      synchronize:
+        src: "{{ playbook_dir }}/../"
+        dest: /opt/rootmedic/
+        rsync_opts:
+          - "--exclude=.git"
+          - "--exclude=.venv"
+          - "--exclude=__pycache__"
+          - "--exclude=.pytest_cache"
+          - "--exclude=*.pyc"
+          - "--exclude=.rollback_snapshots"
+          - "--exclude=remediation_state.json"
+          - "--exclude=dry_run.log"
+          - "--exclude=user_database.db"
+          - "--exclude=*.deb"
+          - "--exclude=*.tar.gz"
+          - "--exclude=*.zip"
+
+    - name: Create virtual environment
+      command: python3 -m venv /opt/rootmedic/.venv
+      args:
+        creates: /opt/rootmedic/.venv/bin/python
+
+    - name: Install pip dependencies
+      pip:
+        name:
+          - requests
+          - pytest
+        virtualenv: /opt/rootmedic/.venv
+
+    - name: Configure Loki URL in agent
+      lineinfile:
+        path: /opt/rootmedic/fetch_normalize_logs.py
+        regexp: '^LOKI_URL = '
+        line: 'LOKI_URL = "{{ loki_query_url }}/loki/api/v1/query_range"'
+
+    - name: Run unit tests on managed node
+      command: /opt/rootmedic/.venv/bin/python -m pytest /opt/rootmedic/tests/ -q
+      args:
+        chdir: /opt/rootmedic
+      register: test_run
+      changed_when: false
+      failed_when: false
+
+    - debug:
+        msg: "Tests on managed node: {{ test_run.stdout }}"
+
+    - name: Install RootMedic systemd timer
+      copy:
+        dest: /etc/systemd/system/rootmedic.service
+        content: |
+          [Unit]
+          Description=RootMedic Autonomous Healing Agent
+          After=network.target promtail.service
+
+          [Service]
+          Type=oneshot
+          ExecStart=/opt/rootmedic/.venv/bin/python /opt/rootmedic/fetch_normalize_logs.py
+          User=rootmedic
+          WorkingDirectory=/opt/rootmedic
+
+    - name: Install RootMedic timer (30s cycle)
+      copy:
+        dest: /etc/systemd/system/rootmedic.timer
+        content: |
+          [Unit]
+          Description=RootMedic agent timer
+
+          [Timer]
+          OnBootSec=15
+          OnUnitActiveSec=30
+
+          [Install]
+          WantedBy=timers.target
+
+    - name: Enable and start RootMedic timer
+      systemd:
+        name: rootmedic.timer
+        enabled: yes
+        state: started
+        daemon_reload: yes
+
+    - name: Run RootMedic once immediately
+      command: /opt/rootmedic/.venv/bin/python /opt/rootmedic/fetch_normalize_logs.py
+      args:
+        chdir: /opt/rootmedic
+      register: first_run
+      changed_when: false
+      failed_when: false
+
+    - debug:
+        msg: "RootMedic first run: {{ first_run.stdout[:300] if first_run.stdout else 'no events' }}"

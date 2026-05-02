@@ -1,0 +1,151 @@
+---
+# Provision 2 Debian VMs via libvirt for RootMedic CI/CD demo.
+
+- name: Provision RootMedic CI VMs
+  hosts: localhost
+  connection: local
+  gather_facts: yes
+  vars:
+    image_dir: "{{ lookup('env', 'HOME') }}/vm-images"
+    image_path: "{{ image_dir }}/debian-12-genericcloud-amd64.qcow2"
+    vm_memory: 2048
+    vm_vcpus: 2
+    vm_disk_size: "10G"
+    network: "network=default"
+    ssh_key: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+    libvirt_default_net_xml: "/usr/share/libvirt/networks/default.xml"
+    libvirt_uri: "qemu:///system"
+
+    vms:
+      - name: rootmedic-log-aggregator
+        ip: 192.168.122.101
+      - name: rootmedic-managed-node
+        ip: 192.168.122.102
+
+  tasks:
+    - name: Check prerequisites
+      command: which {{ item }}
+      loop: [virsh, virt-install, qemu-img]
+      changed_when: false
+
+    - name: Check libvirtd
+      command: systemctl is-active libvirtd
+      register: libvirtd_status
+      changed_when: false
+      failed_when: false
+
+    - name: Start libvirtd
+      command: systemctl start libvirtd
+      when: libvirtd_status.stdout != 'active'
+
+    - name: Check if default network exists
+      command: "virsh -c {{ libvirt_uri }} net-info default"
+      register: net_info
+      changed_when: false
+      failed_when: false
+
+    - name: Define default network
+      command: "virsh -c {{ libvirt_uri }} net-define {{ libvirt_default_net_xml }}"
+      when: net_info.rc != 0
+
+    - name: Ensure default network is active
+      command: "virsh -c {{ libvirt_uri }} net-start default"
+      when: net_info.rc != 0
+
+    - name: Enable autostart for default network
+      command: "virsh -c {{ libvirt_uri }} net-autostart default"
+      when: net_info.rc != 0
+
+    - name: Create image directory
+      file:
+        path: "{{ image_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Check cloud image
+      stat:
+        path: "{{ image_path }}"
+      register: cloud_image
+
+    - name: Download Debian cloud image
+      get_url:
+        url: "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"
+        dest: "{{ image_path }}"
+        mode: '0644'
+      when: not cloud_image.stat.exists
+
+    - name: Destroy existing VMs
+      shell: |
+        for vm in rootmedic-log-aggregator rootmedic-managed-node; do
+          virsh -c {{ libvirt_uri }} destroy $vm 2>/dev/null || true
+          virsh -c {{ libvirt_uri }} undefine --remove-all-storage $vm 2>/dev/null || true
+          rm -f {{ image_dir }}/$vm.qcow2
+        done
+      changed_when: true
+
+    - name: Create VM disk images
+      command: >
+        qemu-img create -f qcow2
+        -b {{ image_path }}
+        -F qcow2
+        {{ image_dir }}/{{ item.name }}.qcow2
+        {{ vm_disk_size }}
+      loop: "{{ vms }}"
+
+    - name: Write SSH key to temp file
+      copy:
+        content: "{{ ssh_key }}"
+        dest: /tmp/rootmedic-ssh-key.pub
+        mode: '0644'
+
+    - name: Provision VMs
+      command: >
+        virt-install
+        --connect {{ libvirt_uri }}
+        --name {{ item.name }}
+        --memory {{ vm_memory }}
+        --vcpus {{ vm_vcpus }}
+        --disk {{ image_dir }}/{{ item.name }}.qcow2
+        --import
+        --os-variant debian12
+        --network {{ network }}
+        --graphics none
+        --noautoconsole
+        --cloud-init ssh-key=/tmp/rootmedic-ssh-key.pub
+      loop: "{{ vms }}"
+
+    - name: Wait for boot
+      pause:
+        seconds: 60
+
+    - name: Verify SSH ready
+      command: >
+        ssh -o StrictHostKeyChecking=no
+        -o ConnectTimeout=5
+        -o UserKnownHostsFile=/dev/null
+        root@{{ item.ip }} 'hostname'
+      loop: "{{ vms }}"
+      register: ssh_ready
+      retries: 30
+      delay: 10
+      until: ssh_ready is success
+
+    - name: Write Ansible inventory
+      copy:
+        dest: /tmp/rootmedic-ci-inventory.ini
+        content: |
+          [log_aggregator]
+          192.168.122.101 ansible_user=root
+
+          [managed_nodes]
+          192.168.122.102 ansible_user=root
+
+          [all:vars]
+          ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+
+    - name: Done
+      debug:
+        msg:
+          - "✅ VMs ready"
+          - "   VM1: ssh root@192.168.122.101"
+          - "   VM2: ssh root@192.168.122.102"

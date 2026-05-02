@@ -1,0 +1,111 @@
+---
+# Deploy Loki + Grafana on the log-aggregator VM.
+# Usage:
+#   ansible-playbook -i /tmp/rootmedic-ci-inventory.ini ci/deploy-logging.yml
+
+- name: Deploy log aggregation stack
+  hosts: log_aggregator
+  vars:
+    loki_version: "2.9.0"
+    grafana_version: "10.2.3"
+
+  tasks:
+    - name: Check if Docker/Podman is available
+      command: which docker
+      register: docker_check
+      changed_when: false
+      failed_when: false
+
+    - name: Check if podman is available (fallback)
+      command: which podman
+      register: podman_check
+      changed_when: false
+      failed_when: false
+      when: docker_check.rc != 0
+
+    - name: Set container runtime
+      set_fact:
+        container_runtime: "{{ 'podman' if docker_check.rc != 0 and podman_check.rc == 0 else 'docker' }}"
+
+    - name: Verify container runtime works
+      command: "{{ container_runtime }} ps"
+      changed_when: false
+
+    - name: Create Loki directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /opt/loki/data
+        - /opt/loki/grafana-data
+
+    - name: Copy Loki configuration
+      copy:
+        src: "{{ playbook_dir }}/../Deployment/loki-config.yaml"
+        dest: /opt/loki/loki-config.yaml
+
+    - name: Copy Promtail configuration
+      copy:
+        src: "{{ playbook_dir }}/../Deployment/promtail-config.yml"
+        dest: /opt/loki/promtail-config.yml
+
+    - name: Create docker-compose.yml for Loki + Grafana
+      copy:
+        dest: /opt/loki/docker-compose.yml
+        content: |
+          version: '3.8'
+          services:
+            loki:
+              image: docker.io/grafana/loki:{{ loki_version }}
+              container_name: loki
+              ports:
+                - "3100:3100"
+              command: -config.file=/etc/loki/loki-config.yaml
+              volumes:
+                - /opt/loki/data:/loki:Z
+                - /opt/loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro,Z
+              restart: unless-stopped
+              security_opt:
+                - label=disable
+
+            grafana:
+              image: docker.io/grafana/grafana:{{ grafana_version }}
+              container_name: grafana
+              ports:
+                - "3000:3000"
+              volumes:
+                - /opt/loki/grafana-data:/var/lib/grafana:Z
+              environment:
+                - GF_SECURITY_ADMIN_USER=admin
+                - GF_SECURITY_ADMIN_PASSWORD=admin
+                - GF_AUTH_ANONYMOUS_ENABLED=true
+              restart: unless-stopped
+              security_opt:
+                - label=disable
+
+    - name: Start Loki and Grafana containers
+      command: "{{ container_runtime }} compose -f /opt/loki/docker-compose.yml up -d"
+      args:
+        chdir: /opt/loki
+      register: compose_up
+      changed_when: "'Created' in compose_up.stdout or 'Started' in compose_up.stdout or 'Creating' in compose_up.stdout"
+
+    - name: Wait for Grafana to be ready
+      uri:
+        url: http://localhost:3000/api/health
+        status_code: 200
+      retries: 20
+      delay: 5
+
+    - name: Add Loki as Grafana datasource
+      uri:
+        url: http://admin:admin@localhost:3000/api/datasources
+        method: POST
+        body_format: json
+        body:
+          name: Loki
+          type: loki
+          url: http://loki:3100
+          access: proxy
+        status_code: [200, 409]

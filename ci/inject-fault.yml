@@ -1,0 +1,134 @@
+---
+# Inject faults and verify autonomous recovery.
+# Usage:
+#   ansible-playbook -i /tmp/rootmedic-ci-inventory.ini ci/inject-fault.yml
+
+- name: Inject fault and verify autonomous recovery
+  hosts: managed_nodes
+  vars:
+    loki_url: "http://192.168.122.101:3100"
+    recovery_wait_seconds: 90
+
+  tasks:
+    # -------------------------------------------------------------- Setup
+    - name: Install nginx for fault demo
+      package:
+        name: nginx
+        state: present
+
+    - name: Ensure nginx is running
+      systemd:
+        name: nginx
+        state: started
+
+    - name: Verify nginx is healthy before fault
+      uri:
+        url: http://localhost:80
+        status_code: 200
+
+    # --------------------------------------------------- Fault 1: Stop nginx
+    - name: "FAULT INJECTION 1: Stop nginx service"
+      systemd:
+        name: nginx
+        state: stopped
+
+    - name: Confirm nginx is down
+      uri:
+        url: http://localhost:80
+      register: nginx_down
+      failed_when: false
+      until: nginx_down is failed
+      retries: 5
+      delay: 2
+
+    - name: Wait for RootMedic autonomous recovery
+      pause:
+        seconds: "{{ recovery_wait_seconds }}"
+
+    - name: Verify nginx was autonomously restarted
+      uri:
+        url: http://localhost:80
+        status_code: 200
+      retries: 10
+      delay: 5
+      register: nginx_recovered
+
+    - name: Report Fault 1 result
+      debug:
+        msg: >
+          {% if nginx_recovered.status == 200 %}
+          ✅ FAULT 1 RECOVERED — nginx restarted autonomously
+          {% else %}
+          ❌ FAULT 1 NOT RECOVERED
+          {% endif %}
+
+    # ------------------------------------------------- Fault 2: Disk pressure
+    - name: "FAULT INJECTION 2: Fill /tmp to trigger disk pressure"
+      shell: |
+        dd if=/dev/zero of=/tmp/rootmedic-test-fill bs=1M count=200 2>/dev/null || true
+      ignore_errors: true
+
+    - name: Wait for RootMedic to detect and respond
+      pause:
+        seconds: "{{ recovery_wait_seconds }}"
+
+    - name: Check if fill file was cleaned by RootMedic
+      stat:
+        path: /tmp/rootmedic-test-fill
+      register: fill_file
+
+    - name: Report Fault 2 result
+      debug:
+        msg: >
+          {% if not fill_file.stat.exists %}
+          ✅ FAULT 2 RECOVERED — disk pressure resolved
+          {% else %}
+          ❌ FAULT 2 NOT RECOVERED — cleaning up manually
+          {% endif %}
+
+    - name: Clean up fill file if still present
+      file:
+        path: /tmp/rootmedic-test-fill
+        state: absent
+      when: fill_file.stat.exists | default(false)
+
+    # ------------------------------------------------- Fault 3: Kill process
+    - name: Start a dummy process to kill
+      shell: |
+        sleep 3600 &
+        echo $!
+      register: dummy_pid
+
+    - name: "FAULT INJECTION 3: Kill process {{ dummy_pid.stdout }}"
+      command: "kill -9 {{ dummy_pid.stdout }}"
+      ignore_errors: true
+
+    - name: Wait for RootMedic to detect and respond
+      pause:
+        seconds: "{{ recovery_wait_seconds }}"
+
+    # ---------------------------------------------------------- Evidence
+    - name: Collect remediation state
+      slurp:
+        src: /opt/rootmedic/remediation_state.json
+      register: state_file
+      ignore_errors: true
+
+    - name: Display remediation summary
+      debug:
+        msg: |
+          ============================================
+          RootMedic CI/CD — Remediation Summary
+          ============================================
+          {% if state_file.content is defined %}
+          {{ state_file.content | b64decode }}
+          {% else %}
+          (no remediation state yet — first run)
+          {% endif %}
+
+    - name: Final health status
+      debug:
+        msg:
+          - "Fault 1 (nginx): {{ 'RECOVERED' if nginx_recovered.status == 200 else 'FAILED' }}"
+          - "Fault 2 (disk):  {{ 'RECOVERED' if not fill_file.stat.exists else 'FAILED' }}"
+          - "Dashboard:       http://192.168.122.101:3000 (admin/admin)"
