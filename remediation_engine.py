@@ -19,6 +19,13 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
+# Optional alerting integration
+try:
+    from alerting import AlertManager, AlertPayload
+    ALERTING_AVAILABLE = True
+except ImportError:
+    ALERTING_AVAILABLE = False
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------

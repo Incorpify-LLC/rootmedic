@@ -1,0 +1,13 @@
+# RootMedic Alerting Configuration
+
+# Slack webhook URL (can also be set via SLACK_WEBHOOK_URL env var)
+slack_webhook_url: ""
+
+# Deduplication window - suppress duplicate alerts for this duration
+dedup_window_minutes: 15
+
+# Escalation - re-notify if issue unresolved after this duration
+escalation_after_minutes: 30
+
+# Grafana base URL for dashboard links
+grafana_base_url: "http://localhost:3000"
