@@ -24,7 +24,8 @@ Logs flow from Linux hosts through Promtail into Loki. The Python agent queries 
 - **Visualization**: Grafana (port 3000, login admin/admin)
 - **AI / LLM**: Ollama (local via `Modelfile`), OpenAI API
 - **Agent runtime**: Python 3.13
-- **Data**: SQLite (`user_database.db`)
+- **Alerting**: Slack incoming webhooks (with dedup/escalation in `alerting.py`)
+- **Data**: SQLite (`user_database.db`, `alerts_state.db`)
 - **CI/CD**: Jenkins (`Jenkinsfile`)
 - **Deployment**: Docker Compose, Ansible
 
@@ -87,7 +88,9 @@ ollama create rootmedic -f Modelfile
   1. **Recommend only** — human-in-the-loop for first N occurrences of a new issue type.
   2. **Semi-autonomous** — applies fix only after dry-run simulation or if confidence > 95%.
   3. **Full autonomous** — after pattern has been validated in production via canary deployments.
-  Includes rollback logic and state tracking (`remediation_state.json`).
+  Includes rollback logic, config snapshots, and state tracking (`remediation_state.json`).
+
+- **`alerting.py`** — Slack alerting with deduplication and escalation for human-intervention events. Uses SQLite-backed state (`alerts_state.db`) to suppress duplicate alerts within a configurable window and escalate unresolved issues. Configured via `alerts.yml` or environment variables (`SLACK_WEBHOOK_URL`).
 
 - **`linked-data.py`** — Standalone linked list implementation backed by SQLite. Used for data-structure demonstrations and testing SQLite connectivity.
 
@@ -111,11 +114,12 @@ ollama create rootmedic -f Modelfile
 - **`inject-fault.yml`** — Injects a controlled fault for autonomous healing verification.
 - **`rootmedic-dashboard.json`** — Grafana dashboard exported for CI import.
 
-### Tests (`tests/`)
+### Tests
 
-- **`test_remediation_engine.py`** — Tests for the graduated autonomy engine, dry-run gates, and rollback behavior.
-- **`test_fetch_normalize_logs.py`** — Tests for log fetching and normalization logic.
-- **`conftest.py`** — Shared pytest fixtures.
+- **`tests/test_remediation_engine.py`** — Tests for the graduated autonomy engine, dry-run gates, and rollback behavior.
+- **`tests/test_fetch_normalize_logs.py`** — Tests for log fetching and normalization logic.
+- **`test_alerting.py`** (repo root) — Tests for the Slack alerting module (dedup, escalation, block building).
+- **`tests/conftest.py`** — Shared pytest fixtures (temp dir, sample logs, runtime state cleanup).
 
 ## Key Conventions
 
