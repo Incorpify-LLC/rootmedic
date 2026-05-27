@@ -415,7 +415,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.config:
-        global ALERTS_CONFIG
         ALERTS_CONFIG = Path(args.config)
 
     config = AlertConfig.load()

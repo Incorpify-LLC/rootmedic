@@ -1,0 +1,156 @@
+/* Basic Reset */
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+/* Container Styles */
+.container {
+    max-width: 1200px;
+    padding: 0 20px;
+    margin: 0 auto;
+}
+
+/* Navigation Bar */
+.navbar {
+    background-color: #333;
+    padding: 10px 0;
+}
+.nav-items {
+    list-style: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.nav-items li a {
+    color: white;
+    text-decoration: none;
+    font-size: 16px;
+    margin-right: 20px;
+}
+
+/* Hero Section */
+.hero {
+    background-image: url('hero-bg.jpg');
+    background-size: cover;
+    background-position: center;
+    height: 50vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    text-align: center;
+}
+.hero h1 {
+    font-size: 3.5rem;
+}
+.hero p {
+    font-size: 2rem;
+    margin-bottom: 20px;
+}
+
+/* Feature Section */
+.features {
+    padding: 60px 0;
+    background-color: #f4f4f4;
+}
+.feature-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 0;
+    border-bottom: 1px solid #ddd;
+}
+.feature-item:last-child {
+    border-bottom: none;
+}
+
+/* Testimonial Section */
+.testimonial {
+    background-color: #333;
+    color: white;
+    padding: 60px 0;
+    text-align: center;
+}
+.testimonial blockquote {
+    font-size: 2rem;
+    margin: 0 auto;
+    max-width: 70%;
+}
+
+/* CTA Section */
+.cta {
+    background-color: #28a745;
+    color: white;
+    padding: 60px 0;
+    text-align: center;
+}
+.cta h2 {
+    font-size: 3rem;
+    margin-bottom: 20px;
+}
+
+/* Footer */
+.footer {
+    background-color: #333;
+    color: white;
+    padding: 20px 0;
+    text-align: center;
+    position: relative;
+    bottom: 0;
+}
+.social-icons {
+    list-style: none;
+    display: flex;
+    justify-content: center;
+    margin-top: 20px;
+}
+.social-icons li a {
+    color: white;
+    font-size: 1.5rem;
+    margin: 0 10px;
+}
+
+/* Button Styles */
+.btn {
+    background-color: #28a745;
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 5px;
+    text-decoration: none;
+    cursor: pointer;
+}
+.btn:hover {
+    background-color: #218838;
+}
+
+/* Responsive Styles */
+@media (max-width: 768px) {
+    .nav-items {
+        flex-direction: column;
+    }
+    .hero h1, .hero p {
+        font-size: 2rem;
+        margin-bottom: 10px;
+    }
+    .feature-item {
+        flex-direction: column;
+        align-items: center;
+    }
+    .testimonial blockquote {
+        max-width: 90%;
+    }
+}
+```
+
+### Notes:
+1. Replace `'hero-bg.jpg'` with the actual path to your hero image.
+2. Update the font-awesome kit link with your own kit for the social icons [K
+to work.
+
+This code provides a basic structure and style for your product page, ensur[5D[K
+ensuring it looks clean and professional. Feel free to adjust the CSS and c[1D[K
+content as needed to better fit your branding and requirements.
+

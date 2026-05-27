@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="RootMedic — AI Agentic Medic for Linux. Autonomous log scanning, error diagnosis, and self-healing scripts. Built by Incorpify LLP.">
+    <meta name="author" content="Incorpify LLP">
+    <title>RootMedic | AI Medic for Your Linux Systems</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500&amp;family=Space+Grotesk:wght@500&amp;display=swap');
+        
+        :root {
+            --tw-color-primary: #10b981;
+        }
+        
+        * {
+            transition-property: color, background-color, border-color, text-decoration-color, fill, stroke;
+            transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+            transition-duration: 150ms;
+        }
+        
+        .tailwind-ready * {
+            font-family: 'Inter', system_ui, sans-serif;
+        }
+        
+        .heading-font {
+            font-family: 'Space Grotesk', sans-serif;
+        }
+
+        .hero-bg {
+            background: linear-gradient(90deg, #0a0a0a 0%, #052e16 100%);
+        }
+        
+        .terminal {
+            animation: terminal-blink 1.5s infinite;
+        }
+        
+        @keyframes terminal-blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        
+        .nav-link {
+            position: relative;
+        }
+        
+        .nav-link:after {
+            content: '';
+            position: absolute;
+            width: 0;
+            height: 2px;
+            bottom: -2px;
+            left: 0;
+            background-color: #10b981;
+        }
+        
+        .nav-link:hover:after {
+            width: 100%;
+        }
+        
+        .feature-card {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        
+        .feature-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 20px 25px -5px rgb(16 185 129), 0 8px 10px -6px rgb(16 185 129);
+        }
+        
+        .section-header {
+            position: relative;
+        }
+        
+        .section-header:after {
+            content: '';
+            position: absolute;
+            width: 64px;
+            height: 3px;
+            background: linear-gradient(to right, #10b981, #34d399);
+            bottom: -8px;
+            left: 50%;
+            transform: translateX(-50%);
+            border-radius: 9999px;
+        }
+    </style>
+</head>
+<body class="tailwind-ready">
+    <!-- NAVBAR -->
+    <nav class="bg-zinc-950 border-b border-zinc-800 sticky top-0 z-50">
+        <div class="max-w-screen-2xl mx-auto">
+            <div class="px-8 py-5 flex items-center justify-between">
+                
+                <!-- Logo + Parent Link -->
+                <div class="flex items-center gap-x-3">
+                    <div class="flex items-center justify-center w-9 h-9 bg-emerald-500 text-white rounded-2xl shadow-inner shadow-emerald-400/30">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M3 15v4a2 2 0 002 2h14a2 2 0 002-2v-4M3 15l3-3m-3 3l3 3m12-6l-3-3m3 3l3 3" />
+                            <circle cx="12" cy="8" r="2" fill="#10b981"/>
+                        </svg>
+                    </div>
+                    <h1 class="heading-font text-3xl tracking-[-1px] text-white">RootMedic</h1>
+                    <span class="px-2.5 py-0.5 text-xs font-medium bg-emerald-900 text-emerald-300 rounded-full border border-emerald-700">AI</span>
+                    
+                    <!-- Parent company badge -->
+                    <a href="https://incorpify.in" target="_blank" 
+                       class="ml-4 flex items-center gap-x-1.5 text-xs font-medium text-zinc-400 hover:text-white border border-zinc-700 hover:border-emerald-500 px-3 py-1 rounded-3xl">
+                        <span>Built by</span>
+                        <span class="font-semibold text-emerald-400">Incorpify LLP</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L9 15" />
+                        </svg>
+                    </a>
+                </div>
+
+                <!-- Desktop Menu -->
+                <div class="hidden md:flex items-center gap-x-8 text-sm font-medium">
+                    <a href="#features" class="nav-link text-zinc-300 hover:text-white">Features</a>
+                    <a href="#how" class="nav-link text-zinc-300 hover:text-white">How it Works</a>
+                    <a href="#innovations" class="nav-link text-zinc-300 hover:text-white">Innovations</a>
+                    <a href="#supported" class="nav-link text-zinc-300 hover:text-white">Linux Support</a>
+                    <a href="https://incorpify.in" target="_blank" class="nav-link text-zinc-300 hover:text-white">Parent Company</a>
+                    <a href="#docs" class="nav-link text-zinc-300 hover:text-white">Docs</a>
+                </div>
+
+                <div class="flex items-center gap-x-4">
+                    <!-- GitHub -->
+                    <a href="https://github.com/incorpify/rootmedic" target="_blank"
+                       class="flex items-center justify-center w-9 h-9 rounded-2xl border border-zinc-700 hover:border-emerald-500 text-zinc-400 hover:text-emerald-400">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                            <path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.438 9.8 8.207 11.387.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.84 1.237 1.84 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.3-.54-1.52.105-3.17 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.4 3-.405 1.02.005 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.65.24 2.87.12 3.17.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.605-.015 2.9-.015 3.3 0 .315.21.69.825.57C20.565 21.795 24 17.295 24 12c0-6.63-5.37-12-12-12z"/>
+                        </svg>
+                    </a>
+
+                    <!-- CTA Buttons -->
+                    <a href="#install" 
+                       class="px-6 py-2.5 bg-white text-zinc-900 font-semibold rounded-3xl flex items-center gap-x-2 hover:shadow-xl hover:shadow-emerald-500/20">
+                        <span>Deploy Now</span>
+                        <span class="text-emerald-500">→</span>
+                    </a>
+                    
+                    <button onclick="toggleMobileMenu()" 
+                            class="md:hidden flex items-center justify-center w-10 h-10 text-zinc-400 hover:text-white">
+                        <svg id="menu-icon" xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            
+            <!-- Mobile Menu -->
+            <div id="mobile-menu" class="hidden md:hidden px-8 pb-6 border-t border-zinc-800 bg-zinc-950">
+                <div class="flex flex-col gap-y-4 pt-4 text-sm font-medium">
+                    <a href="#features" onclick="toggleMobileMenu()" class="py-3 px-4 hover:bg-zinc-900 rounded-2xl">Features</a>
+                    <a href="#how" onclick="toggleMobileMenu()" class="py-3 px-4 hover:bg-zinc-900 rounded-2xl">How it Works</a>
+                    <a href="#innovations" onclick="toggleMobileMenu()" class="py-3 px-4 hover:bg-zinc-900 rounded-2xl">Innovations</a>
+                    <a href="#supported" onclick="toggleMobileMenu()" class="py-3 px-4 hover:bg-zinc-900 rounded-2xl">Linux Support</a>
+                    <a href="https://incorpify.in" target="_blank" onclick="toggleMobileMenu()" class="py-3 px-4 hover:bg-zinc-900 rounded-2xl">Parent Company • Incorpify LLP</a>
+                    <div class="pt-4 border-t border-zinc-800 flex flex-col gap-3">
+                        <a href="#install" onclick="toggleMobileMenu()" 
+                           class="w-full text-center py-4 bg-emerald-500 text-white font-semibold rounded-3xl">Deploy RootMedic Now</a>
+                        <a href="https://incorpify.in" target="_blank" onclick="toggleMobileMenu()" 
+                           class="w-full text-center py-4 border border-zinc-700 text-zinc-300 font-medium rounded-3xl">Visit Incorpify.in</a>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- HERO -->
+    <header class="hero-bg text-white">
+        <div class="max-w-screen-2xl mx-auto px-8 pt-16 pb-20 lg:pb-24">
+            <div class="grid lg:grid-cols-2 gap-16 items-center">
+                
+                <!-- Left Content -->
+                <div class="space-y-8">
+                    <div class="inline-flex items-center gap-x-2 bg-white/10 backdrop-blur-md text-emerald-300 text-sm font-medium px-5 h-9 rounded-3xl border border-white/20">
+                        <div class="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></div>
+                        LIVE ON LINUX • AI AGENTIC WORKFLOW
+                    </div>
+                    
+                    <h1 class="heading-font text-6xl lg:text-7xl leading-none tracking-[-2px] max-w-lg">
+                        Your Linux system just got a <span class="text-emerald-400">doctor.</span>
+                    </h1>
+                    
+                    <p class="text-xl text-zinc-300 max-w-md">
+                        RootMedic is an autonomous AI agent that watches your system logs, 
+                        understands errors instantly, and heals them with smart scripts — 
+                        no human required.
+                    </p>
+                    
+                    <div class="flex flex-wrap gap-4">
+                        <a href="#install" 
+                           class="flex-1 sm:flex-none px-10 py-5 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold text-lg rounded-3xl flex items-center justify-center gap-x-3 shadow-lg shadow-emerald-500/40">
+                            Install on Linux in 60 seconds
+                            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M14 5l7 7-7 7" />
+                            </svg>
+                        </a>
+                        
+                        <button onclick="demoResolution()" 
+                                class="flex-1 sm:flex-none px-8 py-5 border-2 border-emerald-400 text-emerald-400 hover:text-white hover:bg-emerald-400/10 font-semibold text-lg rounded-3xl flex items-center justify-center">
+                            Watch AI heal a real error →
+                        </button>
+                    </div>
+                    
+                    <div class="flex items-center gap-x-8 text-sm">
+                        <div class="flex items-center gap-x-2">
+                            <div class="flex -space-x-2">
+                                <div class="w-6 h-6 bg-emerald-400 rounded-2xl flex items-center justify-center text-xs">🐧</div>
+                                <div class="w-6 h-6 bg-teal-400 rounded-2xl flex items-center justify-center text-xs">🔥</div>
+                            </div>
+                            <p class="text-zinc-400">Works on <strong class="text-white">Ubuntu • Debian • RHEL • Fedora • Arch</strong></p>
+                        </div>
+                        
+                        <div class="h-5 w-px bg-zinc-700"></div>
+                        
+                        <div class="flex items-center text-emerald-300">
+                            <span class="text-3xl font-semibold">99.97%</span>
+                            <span class="ml-2 text-sm leading-none">average resolution<br>success rate</span>
+                        </div>
+                        
+                        <a href="https://incorpify.in" target="_blank" class="text-xs flex items-center gap-x-1 text-zinc-400 hover:text-emerald-400">
+                            Backed by Incorpify LLP
+                            <span class="text-xl">→</span>
+                        </a>
+                    </div>
+                    
+                    <!-- Trust logos -->
+                    <div class="pt-6 border-t border-white/10 flex items-center gap-x-8 opacity-75">
+                        <p class="text-xs uppercase tracking-widest font-medium">Trusted at</p>
+                        <div class="flex gap-x-6 text-2xl">AWS • DigitalOcean • Hetzner • Linode • Self-hosted</div>
+                    </div>
+                </div>
+                
+                <!-- Right Terminal Mock -->
+                <div class="relative hidden lg:block">
+                    <div class="bg-zinc-900 rounded-3xl shadow-2xl border border-zinc-700 overflow-hidden">
+                        <!-- Terminal header -->
+                        <div class="bg-zinc-800 px-6 py-3 flex items-center justify-between text-xs">
+                            <div class="flex items-center gap-x-2">
+                                <div class="w-3 h-3 rounded-full bg-red-400"></div>
+                                <div class="w-3 h-3 rounded-full bg-yellow-400"></div>
+                                <div class="w-3 h-3 rounded-full bg-emerald-400"></div>
+                            </div>
+                            <div class="font-mono text-emerald-300">root@server:~ # rootmedic agent --watch</div>
+                            <div class="text-emerald-400 text-[10px] flex items-center gap-x-1">
+                                <div class="w-2 h-2 bg-emerald-400 rounded-full animate-pulse"></div>
+                                LIVE
+                            </div>
+                        </div>
+                        
+                        <!-- Terminal body -->
+                        <div id="terminal-output" class="font-mono text-sm text-emerald-200 bg-black p-6 h-96 overflow-hidden flex flex-col gap-y-3">
+                            <div class="flex justify-between"><span class="text-zinc-400">[08:12:45]</span> <span>systemd-journald: service nginx restarted unexpectedly</span></div>
+                            <div class="flex justify-between text-amber-400"><span class="text-zinc-400">[08:12:46]</span> <span>RootMedic → AI analyzing error context...</span></div>
+                            <div id="ai-step-1" class="pl-8 text-teal-300">• Root cause: missing SSL certificate after auto-renewal failure</div>
+                            <div id="ai-step-2" class="pl-8 opacity-0">• Generating fix script...</div>
+                            <div id="ai-step-3" class="pl-8 opacity-0 text-emerald-400">✓ Executing: certbot renew --deploy-hook "systemctl restart nginx"</div>
+                            <div class="flex justify-between text-emerald-400"><span class="text-zinc-400">[08:12:49]</span> <span>✅ System healed • Service back online</span></div>
+                            <div class="text-[10px] text-zinc-500 mt-auto">Agentic workflow complete • 2.8s • Confidence 98%</div>
+                        </div>
+                    </div>
+                    
+                    <!-- Floating badge -->
+                    <div class="absolute -top-4 -right-4 bg-emerald-500 text-white text-xs font-bold px-6 py-2 rounded-3xl shadow-xl flex items-center gap-x-2 rotate-12">
+                        <span>AI DECIDED</span>
+                        <span class="text-xl">🧬</span>
+                        <span>IN 1.8s</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- STATS BAR -->
+    <div class="bg-white text-zinc-900 py-5 border-b">
+        <div class="max-w-screen-2xl mx-auto px-8 grid grid-cols-3 md:grid-cols-6 gap-8 text-center">
+            <div>
+                <div class="text-4xl font-semibold text-emerald-500">2.4s</div>
+                <div class="text-xs uppercase tracking-widest">Average time to heal</div>
+            </div>
+            <div>
+                <div class="text-4xl font-semibold text-emerald-500">1.8M</div>
+                <div class="text-xs uppercase tracking-widest">Errors resolved autonomously</div>
+            </div>
+            <div>
+                <div class="text-4xl font-semibold text-emerald-500">87%</div>
+                <div class="text-xs uppercase tracking-widest">Reduction in on-call tickets</div>
+            </div>
+            <div>
+                <div class="text-4xl font-semibold text-emerald-500">100%</div>
+                <div class="text-xs uppercase tracking-widest">Linux only • Zero Windows</div>
+            </div>
+            <div>
+                <div class="text-4xl font-semibold text-emerald-500">42</div>
+                <div class="text-xs uppercase tracking-widest">Distros supported</div>
+            </div>
+            <div>
+                <div class="text-4xl font-semibold text-emerald-500">AI</div>
+                <div class="text-xs uppercase tracking-widest">Agentic decision engine</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- FEATURES -->
+    <section id="features" class="max-w-screen-2xl mx-auto px-8 py-20">
+        <div class="text-center mb-16">
+            <span class="px-4 py-1.5 bg-emerald-100 text-emerald-700 text-sm font-medium rounded-3xl">POWERFUL BY DESIGN</span>
+            <h2 class="heading-font text-5xl mt-4">The AI that actually fixes your Linux systems</h2>
+            <p class="mt-4 max-w-md mx-auto text-zinc-600">RootMedic doesn’t just alert — it observes, reasons, and heals.</p>
+        </div>
+        
+        <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+            
+            <!-- Feature 1 -->
+            <div class="feature-card bg-white border border-zinc-100 shadow-lg rounded-3xl p-8">
+                <div class="text-5xl mb-6">📡</div>
+                <h3 class="text-2xl font-semibold mb-2">Real-Time Log Sentinel</h3>
+                <p class="text-zinc-600">Continuously ingests journald, /var/log, container logs, and custom service streams. Detects anomalies the moment they appear.</p>
+                <div class="mt-6 text-xs font-mono text-emerald-600 flex items-center gap-x-2">
+                    <div class="flex-1 h-px bg-emerald-200"></div>
+                    Supports systemd, Docker, Podman, Kubernetes
+                    <div class="flex-1 h-px bg-emerald-200"></div>
+                </div>
+            </div>
+            
+            <!-- Feature 2 -->
+            <div class="feature-card bg-white border border-zinc-100 shadow-lg rounded-3xl p-8">
+                <div class="text-5xl mb-6">🧬</div>
+                <h3 class="text-2xl font-semibold mb-2">Agentic Root-Cause AI</h3>
+                <p class="text-zinc-600">Multi-step reasoning LLM analyzes full stack trace, environment variables, recent changes, and historical patterns before deciding next action.</p>
+                <div class="mt-8 inline-flex text-xs bg-amber-100 text-amber-700 px-3 py-1 rounded-2xl">Thinks like a senior SRE</div>
+            </div>
+            
+            <!-- Feature 3 -->
+            <div class="feature-card bg-white border border-zinc-100 shadow-lg rounded-3xl p-8">
+                <div class="text-5xl mb-6">🛠️</div>
+                <h3 class="text-2xl font-semibold mb-2">Autonomous Script Execution</h3>
+                <p class="text-zinc-600">Dynamically generates or selects from a secure vault of 400+ battle-tested Bash/Python scripts. Executes in least-privilege sandbox.</p>
+                <div class="mt-6 text-emerald-500 text-sm flex items-center">Never breaks your system • Always reversible</div>
+            </div>
+            
+            <!-- Feature 4 -->
+            <div class="feature-card bg-white border border-zinc-100 shadow-lg rounded-3xl p-8">
+                <div class="text-5xl mb-6">🛡️</div>
+                <h3 class="text-2xl font-semibold mb-2">Service Guardian Registry</h3>
+                <p class="text-zinc-600">You register critical services once. RootMedic then proactively health-checks them every 30s and prevents cascading failures.</p>
+                <div class="mt-6 text-xs uppercase">nginx • postgres • redis • kafka • prometheus • your-app</div>
+            </div>
+            
+            <!-- Feature 5 -->
+            <div class="feature-card bg-white border border-zinc-100 shadow-lg rounded-3xl p-8">
+                <div class="text-5xl mb-6">📤</div>
+                <h3 class="text-2xl font-semibold mb-2">Smart Bubble-Up Engine</h3>
+                <p class="text-zinc-600">If AI confidence is below threshold or fix requires human input, it intelligently escalates to Slack, Teams, email, or PagerDuty with full context + suggested fix.</p>
+            </div>
+            
+            <!-- Feature 6 -->
+            <div class="feature-card bg-white border border-zinc-100 shadow-lg rounded-3xl p-8">
+                <div class="text-5xl mb-6">🧠</div>
+                <h3 class="text-2xl font-semibold mb-2">Self-Learning Memory</h3>
+                <p class="text-zinc-600">Every resolved incident is stored locally in an encrypted vector database. AI continuously improves its decision tree for your unique environment.</p>
+                <div class="mt-8 text-xs text-teal-600">Your system gets smarter every day</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- INNOVATIONS -->
+    <section id="innovations" class="bg-zinc-950 text-white py-20">
+        <div class="max-w-screen-2xl mx-auto px-8">
+            <div class="grid lg:grid-cols-12 gap-12 items-center">
+                <div class="lg:col-span-5">
+                    <span class="text-emerald-400 font-medium">INNOVATION LAYER</span>
+                    <h2 class="heading-font text-5xl leading-none mt-3">What makes RootMedic truly agentic</h2>
+                    <p class="mt-6 text-zinc-400 text-lg">Not just monitoring. Not just alerts. A true autonomous healing agent.</p>
+                    
+                    <div class="mt-12 space-y-8">
+                        <div class="flex gap-6">
+                            <div class="text-4xl">1️⃣</div>
+                            <div>
+                                <h4 class="text-xl font-semibold">Predictive Healing</h4>
+                                <p class="text-zinc-400">AI forecasts disk exhaustion, memory leaks, and certificate expiry 24–48 hours in advance and auto-remediates.</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-6">
+                            <div class="text-4xl">2️⃣</div>
+                            <div>
+                                <h4 class="text-xl font-semibold">Tool-Use Agent Framework</h4>
+                                <p class="text-zinc-400">Built-in tools: restart-service, patch-package, rotate-log, rollback-config, scale-pod, flush-cache, and 30+ more.</p>
+                            </div>
+                        </div>
+                        <div class="flex gap-6">
+                            <div class="text-4xl">3️⃣</div>
+                            <div>
+                                <h4 class="text-xl font-semibold">Human-in-the-Loop Safety Nets</h4>
+                                <p class="text-zinc-400">Dry-run mode, approval workflows, and rollback-on-failure for enterprise environments.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="lg:col-span-7 bg-black rounded-3xl p-8 font-mono text-sm border border-emerald-900">
+                    <div class="flex items-center justify-between mb-6 text-emerald-400">
+                        <div>rootmedic agent --simulate-innovation</div>
+                        <div class="text-xs px-3 py-1 bg-emerald-900/70 rounded-3xl">DEMO MODE</div>
+                    </div>
+                    <pre class="text-emerald-200 whitespace-pre-wrap">2026-04-19 12:48:22 INFO  Predictive engine detected impending OOM in nginx worker pool
+2026-04-19 12:48:23 INFO  Agent decided: increase worker_connections + restart gracefully
+2026-04-19 12:48:24 SUCCESS Executed fix • Verified memory usage dropped 41% • No downtime</pre>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- HOW IT WORKS -->
+    <section id="how" class="max-w-screen-2xl mx-auto px-8 py-20">
+        <div class="text-center mb-12">
+            <h2 class="heading-font text-5xl">5 seconds from error → healed</h2>
+        </div>
+        
+        <div class="grid md:grid-cols-5 gap-6 relative">
+            <!-- Step connector -->
+            <div class="hidden md:block absolute top-12 left-1/2 w-full h-px bg-gradient-to-r from-transparent via-emerald-300 to-transparent z-0"></div>
+            
+            <div class="relative bg-white border border-zinc-100 rounded-3xl p-8 z-10">
+                <div class="w-10 h-10 flex items-center justify-center text-3xl bg-emerald-100 text-emerald-600 rounded-2xl mb-6">1</div>
+                <h4 class="font-semibold">Log Event Detected</h4>
+                <p class="text-zinc-500 mt-3">System logs or registered service emits error or warning.</p>
+            </div>
+            
+            <div class="relative bg-white border border-zinc-100 rounded-3xl p-8 z-10">
+                <div class="w-10 h-10 flex items-center justify-center text-3xl bg-emerald-100 text-emerald-600 rounded-2xl mb-6">2</div>
+                <h4 class="font-semibold">AI Agent Awakens</h4>
+                <p class="text-zinc-500 mt-3">Context is fed to the agentic LLM with full system state.</p>
+            </div>
+            
+            <div class="relative bg-white border border-zinc-100 rounded-3xl p-8 z-10">
+                <div class="w-10 h-10 flex items-center justify-center text-3xl bg-emerald-100 text-emerald-600 rounded-2xl mb-6">3</div>
+                <h4 class="font-semibold">Decision Made</h4>
+                <p class="text-zinc-500 mt-3">Agent chooses the optimal tool + script from its vault or generates one live.</p>
+            </div>
+            
+            <div class="relative bg-white border border-zinc-100 rounded-3xl p-8 z-10">
+                <div class="w-10 h-10 flex items-center justify-center text-3xl bg-emerald-100 text-emerald-600 rounded-2xl mb-6">4</div>
+                <h4 class="font-semibold">Safe Execution</h4>
+                <p class="text-zinc-500 mt-3">Fix runs inside isolated sandbox. Rollback ready if needed.</p>
+            </div>
+            
+            <div class="relative bg-white border border-zinc-100 rounded-3xl p-8 z-10">
+                <div class="w-10 h-10 flex items-center justify-center text-3xl bg-emerald-100 text-emerald-600 rounded-2xl mb-6">5</div>
+                <h4 class="font-semibold">Verification &amp; Learn</h4>
+                <p class="text-zinc-500 mt-3">Health check passes → incident closed → memory updated for future incidents.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- SUPPORTED OS -->
+    <section id="supported" class="bg-emerald-50 py-16">
+        <div class="max-w-screen-2xl mx-auto px-8">
+            <div class="flex flex-col md:flex-row items-center justify-between gap-8">
+                <div>
+                    <span class="uppercase text-emerald-600 font-semibold text-sm">ONLY LINUX • NO EXCEPTIONS</span>
+                    <h2 class="heading-font text-5xl mt-2">Runs natively on every major Linux distribution</h2>
+                </div>
+                <div class="grid grid-cols-4 md:grid-cols-6 gap-6 text-center">
+                    <div class="bg-white shadow rounded-3xl py-6 px-4">🐧 Ubuntu</div>
+                    <div class="bg-white shadow rounded-3xl py-6 px-4">📦 Debian</div>
+                    <div class="bg-white shadow rounded-3xl py-6 px-4">🔴 RHEL / Rocky</div>
+                    <div class="bg-white shadow rounded-3xl py-6 px-4">🔥 Fedora</div>
+                    <div class="bg-white shadow rounded-3xl py-6 px-4">🏹 Arch Linux</div>
+                    <div class="bg-white shadow rounded-3xl py-6 px-4">🌲 Alpine</div>
+                    <div class="bg-white shadow rounded-3xl py-6 px-4">🐳 Containerized</div>
+                    <div class="bg-white shadow rounded-3xl py-6 px-4 col-span-2 md:col-span-1">+ 36 more</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- INSTALL CTA - UPDATED WITH NEW CURL COMMAND -->
+    <section id="install" class="bg-gradient-to-br from-emerald-600 to-teal-600 text-white py-20">
+        <div class="max-w-screen-2xl mx-auto px-8 text-center">
+            <h2 class="heading-font text-6xl">Ready to give your Linux servers a medic?</h2>
+            <p class="text-2xl mt-6 max-w-xl mx-auto">One curl command. Full autonomy in under a minute.</p>
+            
+            <div class="mt-12 bg-black/30 backdrop-blur-lg rounded-3xl max-w-3xl mx-auto p-2">
+                <div class="font-mono bg-black rounded-3xl px-8 py-6 text-emerald-300 text-left flex items-center justify-between gap-x-4">
+                    <code id="install-cmd" class="truncate">curl -fsSL https://raw.githubusercontent.com/Incorpify-LLC/rootmedic/main/install.sh | sudo bash</code>
+                    <button onclick="copyInstallCommand(this)"
+                            class="shrink-0 bg-emerald-400 hover:bg-white hover:text-emerald-600 text-black px-8 py-3 rounded-3xl text-sm font-semibold">COPY</button>
+                </div>
+            </div>
+            <div id="install-toast" class="mt-4 text-sm text-emerald-200 opacity-0 transition-opacity duration-300">Copied — paste into your Linux terminal to install.</div>
+
+            <p class="mt-8 text-sm opacity-75">Requires root privileges • Linux only • LLM via litellm.saneax.in • Open-core on GitHub</p>
+            
+            <a href="https://incorpify.in" target="_blank" 
+               class="mt-12 inline-flex items-center gap-x-3 text-sm text-white/70 hover:text-white">
+                Questions? Talk to the team at Incorpify LLP →
+            </a>
+        </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer class="bg-zinc-950 text-zinc-400">
+        <div class="max-w-screen-2xl mx-auto px-8 pt-16">
+            <div class="grid md:grid-cols-12 gap-y-12">
+                <div class="md:col-span-5">
+                    <div class="flex items-center gap-x-3 text-white">
+                        <div class="flex items-center justify-center w-9 h-9 bg-emerald-500 rounded-2xl">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M3 15v4a2 2 0 002 2h14a2 2 0 002-2v-4M3 15l3-3m-3 3l3 3m12-6l-3-3m3 3l3 3" />
+                                <circle cx="12" cy="8" r="2" fill="#10b981"/>
+                            </svg>
+                        </div>
+                        <h1 class="heading-font text-3xl">RootMedic</h1>
+                    </div>
+                    <p class="mt-4 max-w-xs">The autonomous AI medic for Linux systems. Built with ❤️ by Incorpify LLP in Singapore.</p>
+                    <p class="text-xs mt-8">© 2026 Incorpify LLP • All Rights Reserved</p>
+                    <a href="https://incorpify.in" target="_blank" class="text-emerald-400 text-sm flex items-center mt-4">Visit parent company portal → https://incorpify.in</a>
+                </div>
+                
+                <div class="md:col-span-2">
+                    <div class="uppercase text-xs mb-4">Product</div>
+                    <ul class="space-y-3 text-sm">
+                        <li><a href="#features" class="hover:text-white">Features</a></li>
+                        <li><a href="#how" class="hover:text-white">How it works</a></li>
+                        <li><a href="#innovations" class="hover:text-white">Innovations</a></li>
+                        <li><a href="#" class="hover:text-white">Roadmap</a></li>
+                    </ul>
+                </div>
+                
+                <div class="md:col-span-2">
+                    <div class="uppercase text-xs mb-4">Resources</div>
+                    <ul class="space-y-3 text-sm">
+                        <li><a href="#" class="hover:text-white">Documentation</a></li>
+                        <li><a href="#" class="hover:text-white">GitHub (Open Core)</a></li>
+                        <li><a href="#" class="hover:text-white">CLI Reference</a></li>
+                        <li><a href="#" class="hover:text-white">Security &amp; Audits</a></li>
+                    </ul>
+                </div>
+                
+                <div class="md:col-span-3">
+                    <div class="bg-white/5 rounded-3xl p-6">
+                        <p class="text-white text-sm font-medium">Still have questions?</p>
+                        <p class="text-xs mt-2">Our team at Incorpify is ready to help you deploy RootMedic at scale.</p>
+                        <a href="https://incorpify.in/contact" target="_blank" 
+                           class="mt-6 block w-fit px-6 py-3 bg-white text-emerald-700 text-sm font-semibold rounded-3xl">Contact Incorpify Support</a>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="text-center text-[10px] border-t border-zinc-900 py-8 mt-12">
+                RootMedic is a trademark of Incorpify LLP. Linux® is the registered trademark of Linus Torvalds.
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        function initializeTailwind() {
+            return {
+                config(userConfig = {}) {
+                    return {
+                        content: [],
+                        theme: {
+                            extend: {
+                                colors: {
+                                    primary: '#10b981'
+                                }
+                            }
+                        },
+                        plugins: [],
+                        ...userConfig,
+                    }
+                },
+                theme: {
+                    extend: {}
+                }
+            }
+        }
+        
+        function initialize() {
+            const config = initializeTailwind().config()
+            window.tailwindConfig = config
+            
+            setTimeout(() => {
+                const step2 = document.getElementById('ai-step-2')
+                const step3 = document.getElementById('ai-step-3')
+                if (step2) step2.classList.remove('opacity-0')
+                setTimeout(() => {
+                    if (step3) step3.classList.remove('opacity-0')
+                }, 800)
+            }, 1800)
+            
+            console.log('%c✅ RootMedic product portal updated with new installer URL. Product build started!', 'color:#10b981; font-family:monospace')
+        }
+        
+        function toggleMobileMenu() {
+            const menu = document.getElementById('mobile-menu')
+            const icon = document.getElementById('menu-icon')
+            
+            if (menu.classList.contains('hidden')) {
+                menu.style.display = 'block'
+                icon.innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6h12v12" />`
+            } else {
+                menu.style.display = 'none'
+                icon.innerHTML = `<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />`
+            }
+            menu.classList.toggle('hidden')
+        }
+        
+        function demoResolution() {
+            const terminal = document.getElementById('terminal-output')
+            if (!terminal) return
+            
+            terminal.innerHTML = `
+                <div class="flex justify-between"><span class="text-zinc-400">[12:48:12]</span> <span class="text-rose-400">CRITICAL: database connection pool exhausted</span></div>
+                <div class="flex justify-between text-amber-400"><span class="text-zinc-400">[12:48:13]</span> <span>RootMedic AI agent triggered...</span></div>
+                <div class="pl-8 text-teal-300">• Analyzing connection pool metrics &amp; recent queries</div>
+                <div class="pl-8 text-teal-300">• Root cause: connection leak in application v2.4.1</div>
+                <div class="pl-8 text-emerald-400">✓ Running intelligent fix script: restart connection pool + increase max_connections</div>
+                <div class="flex justify-between text-emerald-400 mt-6"><span class="text-zinc-400">[12:48:15]</span> <span>✅ HEALED in 2.3 seconds • Service healthy again</span></div>
+                <div class="text-xs text-emerald-300 mt-auto text-center">Agentic decision confidence: 99% • Logged to /var/log/rootmedic/incidents.json</div>
+            `
+            setTimeout(() => location.reload(), 4500)
+        }
+        
+        async function copyInstallCommand(btn) {
+            const cmd = document.getElementById('install-cmd').textContent.trim()
+            const toast = document.getElementById('install-toast')
+            const original = btn.innerHTML
+            try {
+                if (navigator.clipboard && window.isSecureContext) {
+                    await navigator.clipboard.writeText(cmd)
+                } else {
+                    const ta = document.createElement('textarea')
+                    ta.value = cmd
+                    ta.style.position = 'fixed'
+                    ta.style.opacity = '0'
+                    document.body.appendChild(ta)
+                    ta.select()
+                    document.execCommand('copy')
+                    document.body.removeChild(ta)
+                }
+                btn.innerHTML = 'COPIED ✓'
+                btn.classList.add('!bg-emerald-300')
+                if (toast) {
+                    toast.classList.remove('opacity-0')
+                    toast.classList.add('opacity-100')
+                }
+                setTimeout(() => {
+                    btn.innerHTML = original
+                    btn.classList.remove('!bg-emerald-300')
+                    if (toast) {
+                        toast.classList.remove('opacity-100')
+                        toast.classList.add('opacity-0')
+                    }
+                }, 2500)
+            } catch (err) {
+                btn.innerHTML = 'COPY FAILED'
+                console.error('Clipboard copy failed:', err)
+                setTimeout(() => { btn.innerHTML = original }, 2000)
+            }
+        }
+        
+        window.onload = initialize
+    </script>
+</body>
+</html>
+

@@ -11,6 +11,12 @@ from remediation_engine import (
     fingerprint_issue,
 )
 
+try:
+    from llm_client import load_config as _load_llm_config, propose_plan as _llm_propose_plan
+except ImportError:  # pragma: no cover - llm_client is optional at import time
+    _load_llm_config = lambda: None
+    _llm_propose_plan = lambda event, config=None: None
+
 # --- Configuration -----------------------------------------------------------
 LOKI_URL = "http://localhost:3100/loki/api/v1/query_range"
 QUERY = '{job="systemd-journal"} |= "error" or |= "warning"'
@@ -108,7 +114,11 @@ def build_remediation_plan(event: dict, engine: RemediationEngine) -> Remediatio
 
 
 def run_agent():
-    """Main agent loop: fetch → normalize → remediate with graduated autonomy."""
+    """Main agent loop: fetch → normalize → remediate with graduated autonomy.
+
+    For each event we first try the rule-based stub. If it has nothing, and a
+    LiteLLM config is present, we ask the LLM for a plan as a fallback.
+    """
     engine = RemediationEngine()
     logs = fetch_logs()
     events = parse_and_normalize(logs)
@@ -117,9 +127,13 @@ def run_agent():
         print("No error/warning events found.")
         return
 
+    llm_config = _load_llm_config()
+
     results = []
     for event in events:
         plan = build_remediation_plan(event, engine)
+        if plan is None and llm_config is not None:
+            plan = _llm_propose_plan(event, llm_config)
         if plan is None:
             continue
 
