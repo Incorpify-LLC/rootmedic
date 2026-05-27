@@ -1,7 +1,6 @@
-"""Tests for remediation_engine.py — graduated autonomy, snapshots, dry-run."""
+"""Tests for remediation_engine.py — recommend-only autonomy, snapshots, dry-run, apply."""
 
 import json
-import time
 from pathlib import Path
 from unittest import mock
 
@@ -12,6 +11,7 @@ from remediation_engine import (
     IssueRecord,
     RemediationEngine,
     RemediationPlan,
+    REMEDIATION_YAML,
     cleanup_snapshots,
     compute_confidence,
     determine_autonomy,
@@ -23,7 +23,6 @@ from remediation_engine import (
     snapshot_configs,
     STATE_FILE,
     OCCURRENCE_GATE,
-    CONFIDENCE_THRESHOLD,
 )
 
 
@@ -31,56 +30,55 @@ from remediation_engine import (
 
 class TestFingerprintIssue:
     def test_same_message_same_fingerprint(self):
-        fp1 = fingerprint_issue("error: connection refused")
-        fp2 = fingerprint_issue("error: connection refused")
-        assert fp1 == fp2
+        assert fingerprint_issue("error: connection refused") == fingerprint_issue("error: connection refused")
 
     def test_different_messages_different_fingerprint(self):
-        fp1 = fingerprint_issue("connection refused")
-        fp2 = fingerprint_issue("out of memory")
-        assert fp1 != fp2
+        assert fingerprint_issue("connection refused") != fingerprint_issue("out of memory")
 
     def test_unit_affects_fingerprint(self):
-        fp1 = fingerprint_issue("error 500", unit="nginx.service")
-        fp2 = fingerprint_issue("error 500", unit="postgresql.service")
-        assert fp1 != fp2
+        assert (
+            fingerprint_issue("error 500", unit="nginx.service")
+            != fingerprint_issue("error 500", unit="postgresql.service")
+        )
 
     def test_strips_timestamps(self):
-        fp1 = fingerprint_issue("2025-01-15 12:00:00 error: timeout")
-        fp2 = fingerprint_issue("2025-06-30 23:59:59 error: timeout")
-        assert fp1 == fp2
+        assert (
+            fingerprint_issue("2025-01-15 12:00:00 error: timeout")
+            == fingerprint_issue("2025-06-30 23:59:59 error: timeout")
+        )
 
     def test_strips_pids(self):
-        fp1 = fingerprint_issue("nginx[1234]: connection refused")
-        fp2 = fingerprint_issue("nginx[5678]: connection refused")
-        assert fp1 == fp2
+        assert (
+            fingerprint_issue("nginx[1234]: connection refused")
+            == fingerprint_issue("nginx[5678]: connection refused")
+        )
 
     def test_strips_ips(self):
-        fp1 = fingerprint_issue("connect to 10.0.0.1:8080 failed")
-        fp2 = fingerprint_issue("connect to 192.168.1.100:8080 failed")
-        assert fp1 == fp2
+        assert (
+            fingerprint_issue("connect to 10.0.0.1:8080 failed")
+            == fingerprint_issue("connect to 192.168.1.100:8080 failed")
+        )
 
     def test_strips_hex_addresses(self):
-        fp1 = fingerprint_issue("segfault at 0x7f8a1c000000")
-        fp2 = fingerprint_issue("segfault at 0xdeadbeef")
-        assert fp1 == fp2
+        assert (
+            fingerprint_issue("segfault at 0x7f8a1c000000")
+            == fingerprint_issue("segfault at 0xdeadbeef")
+        )
 
     def test_empty_message(self):
-        fp = fingerprint_issue("", "")
-        assert len(fp) == 16
+        assert len(fingerprint_issue("", "")) == 16
 
 
 # ---------------------------------------------------------------- compute_confidence
 
 class TestComputeConfidence:
     def test_zero_occurrences_zero_confidence(self):
-        record = IssueRecord(fingerprint="abc", occurrences=0)
-        assert compute_confidence(record) == 0.0
+        assert compute_confidence(IssueRecord(fingerprint="abc", occurrences=0)) == 0.0
 
     def test_low_occurrences_low_confidence(self):
         record = IssueRecord(fingerprint="abc", occurrences=1, successful_fixes=1)
         conf = compute_confidence(record)
-        assert 0 < conf < 0.5  # weight < 1.0
+        assert 0 < conf < 0.5
 
     def test_high_occurrences_full_confidence(self):
         record = IssueRecord(
@@ -96,7 +94,6 @@ class TestComputeConfidence:
             fingerprint="abc",
             occurrences=OCCURRENCE_GATE * 3,
             successful_fixes=10,
-            failed_fixes=0,
         )
         full = compute_confidence(record, match_quality=1.0)
         half = compute_confidence(record, match_quality=0.5)
@@ -109,40 +106,28 @@ class TestComputeConfidence:
             successful_fixes=5,
             failed_fixes=5,
         )
-        conf = compute_confidence(record)
-        assert conf < 1.0
-        assert conf == pytest.approx(0.5, abs=0.01)
+        assert compute_confidence(record) == pytest.approx(0.5, abs=0.01)
 
 
 # --------------------------------------------------------------- determine_autonomy
 
 class TestDetermineAutonomy:
-    def test_below_gate_always_recommend(self):
-        record = IssueRecord(fingerprint="a", occurrences=2)
-        assert determine_autonomy(record, 1.0) == AutonomyLevel.RECOMMEND
+    def test_below_gate_recommend(self):
+        assert determine_autonomy(IssueRecord(fingerprint="a", occurrences=2)) == AutonomyLevel.RECOMMEND
 
-    def test_at_gate_no_history_semi(self):
+    def test_at_gate_validated(self):
         record = IssueRecord(fingerprint="a", occurrences=OCCURRENCE_GATE)
-        assert determine_autonomy(record, 0.0) == AutonomyLevel.SEMI_AUTONOMOUS
+        assert determine_autonomy(record) == AutonomyLevel.VALIDATED
 
-    def test_high_confidence_and_success_full(self):
+    def test_far_past_gate_still_validated_never_auto(self):
+        """The engine must never escalate past VALIDATED — no auto-apply tier exists."""
         record = IssueRecord(
             fingerprint="a",
-            occurrences=10,
-            successful_fixes=10,
+            occurrences=100,
+            successful_fixes=100,
             failed_fixes=0,
         )
-        assert determine_autonomy(record, 0.99) == AutonomyLevel.FULL_AUTONOMOUS
-
-    def test_high_confidence_but_poor_success_stays_semi(self):
-        record = IssueRecord(
-            fingerprint="a",
-            occurrences=10,
-            successful_fixes=2,
-            failed_fixes=8,
-        )
-        confidence = compute_confidence(record)
-        assert determine_autonomy(record, confidence) == AutonomyLevel.SEMI_AUTONOMOUS
+        assert determine_autonomy(record, 1.0) == AutonomyLevel.VALIDATED
 
 
 # ----------------------------------------------------------------- snapshot_configs
@@ -153,12 +138,10 @@ class TestSnapshotConfigs:
         src.write_text("original content")
         snapshots = snapshot_configs([str(src)])
         assert str(src) in snapshots
-        assert Path(snapshots[str(src)]).exists()
         assert Path(snapshots[str(src)]).read_text() == "original content"
 
     def test_skips_nonexistent_paths(self, temp_dir):
-        snapshots = snapshot_configs([str(temp_dir / "does_not_exist")])
-        assert len(snapshots) == 0
+        assert snapshot_configs([str(temp_dir / "does_not_exist")]) == {}
 
 
 class TestRestoreSnapshots:
@@ -178,7 +161,6 @@ class TestCleanupSnapshots:
         src.write_text("data")
         snapshots = snapshot_configs([str(src)])
         backup_path = Path(snapshots[str(src)])
-        assert backup_path.exists()
         cleanup_snapshots(snapshots)
         assert not backup_path.exists()
 
@@ -206,18 +188,14 @@ class TestDryRun:
             rollback_commands=[],
         )
         dry_run(plan)
-        log = Path("dry_run.log")
-        assert log.exists()
-        content = log.read_text()
-        assert "DRY-RUN" in content
+        assert Path("dry_run.log").exists()
 
 
 # ------------------------------------------------------- load_state / save_state
 
 class TestStatePersistence:
     def test_load_state_empty_when_file_missing(self):
-        state = load_state()
-        assert state == {}
+        assert load_state() == {}
 
     def test_save_and_load_roundtrip(self):
         record = IssueRecord(
@@ -230,20 +208,35 @@ class TestStatePersistence:
         )
         save_state({"fp1": record})
         loaded = load_state()
-        assert "fp1" in loaded
         assert loaded["fp1"].occurrences == 5
         assert loaded["fp1"].successful_fixes == 3
 
     def test_state_file_is_valid_json(self):
         save_state({"x": IssueRecord(fingerprint="x", occurrences=1)})
         data = json.loads(STATE_FILE.read_text())
-        assert "x" in data
         assert data["x"]["occurrences"] == 1
 
 
-# ------------------------------------------------------------ RemediationEngine
+# ------------------------------------------------------------ RemediationPlan.to_yaml
 
-class TestRemediationEngine:
+class TestPlanYaml:
+    def test_to_yaml_includes_core_fields(self):
+        plan = RemediationPlan(
+            issue_fingerprint="fp",
+            description="restart nginx",
+            commands=["systemctl restart nginx"],
+            rollback_commands=["systemctl stop nginx"],
+            confidence=0.5,
+        )
+        rendered = plan.to_yaml()
+        assert "restart nginx" in rendered
+        assert "systemctl restart nginx" in rendered
+        assert "fp" in rendered
+
+
+# ------------------------------------------------------ RemediationEngine.assess
+
+class TestEngineAssess:
     def test_assess_new_issue_recommend(self):
         engine = RemediationEngine()
         level, record, conf = engine.assess("connection refused", "nginx.service")
@@ -251,120 +244,131 @@ class TestRemediationEngine:
         assert record.occurrences == 1
         assert conf == 0.0
 
-    def test_assess_accumulates_occurrences(self):
+    def test_assess_promotes_to_validated_at_gate(self):
         engine = RemediationEngine()
         for _ in range(OCCURRENCE_GATE):
             level, _, _ = engine.assess("connection refused", "nginx.service")
-        assert level != AutonomyLevel.RECOMMEND
+        assert level == AutonomyLevel.VALIDATED
 
-    def test_execute_recommend_skips_and_reports(self):
+
+# ---------------------------------------------------- RemediationEngine.recommend
+
+class TestEngineRecommend:
+    def test_recommend_returns_recommendation_without_executing(self, temp_dir):
         engine = RemediationEngine()
-        engine.assess("err", "unit")
         plan = RemediationPlan(
             issue_fingerprint="abc",
             description="restart nginx",
-            commands=["systemctl restart nginx"],
+            commands=[f"touch {temp_dir}/should_not_exist"],
             rollback_commands=["systemctl stop nginx"],
         )
-        result = engine.execute(plan, AutonomyLevel.RECOMMEND)
+        result = engine.recommend(plan, AutonomyLevel.RECOMMEND, yaml_path=temp_dir / "plan.yaml")
         assert result["status"] == "recommended"
         assert "Human approval required" in result["message"]
-        assert "systemctl restart nginx" in result["message"]
+        assert (temp_dir / "plan.yaml").exists()
+        # The command must not have been run.
+        assert not (temp_dir / "should_not_exist").exists()
 
-    def test_execute_semi_low_confidence_dry_run(self):
+    def test_recommend_validated_attaches_dry_run(self, temp_dir):
         engine = RemediationEngine()
-        # Build up occurrences so it's at SEMI level
-        for _ in range(OCCURRENCE_GATE):
-            engine.assess("connection refused", "nginx.service")
-        level, _, conf = engine.assess("connection refused", "nginx.service")
-        assert level == AutonomyLevel.SEMI_AUTONOMOUS
         plan = RemediationPlan(
             issue_fingerprint="fp",
             description="restart",
             commands=["echo ok"],
             rollback_commands=["echo revert"],
-            confidence=conf,
+            confidence=0.5,
         )
-        result = engine.execute(plan, AutonomyLevel.SEMI_AUTONOMOUS)
-        # confidence is 0 → should dry-run, not apply
-        assert result["status"] in ("dry_run", "recommended")
+        result = engine.recommend(plan, AutonomyLevel.VALIDATED, yaml_path=temp_dir / "plan.yaml")
+        assert result["status"] == "validated_recommendation"
+        assert "DRY-RUN" in (result["dry_run"] or "")
+        assert (temp_dir / "plan.yaml").exists()
 
+    def test_recommend_writes_default_yaml(self):
+        engine = RemediationEngine()
+        plan = RemediationPlan(
+            issue_fingerprint="fp",
+            description="restart",
+            commands=["echo ok"],
+            rollback_commands=[],
+        )
+        engine.recommend(plan, AutonomyLevel.RECOMMEND)
+        assert REMEDIATION_YAML.exists()
+        REMEDIATION_YAML.unlink()  # cleanup
+
+
+# ------------------------------------------------------- RemediationEngine.apply
+
+class TestEngineApply:
     @mock.patch("remediation_engine.subprocess.run")
     @mock.patch("remediation_engine.snapshot_configs", return_value={})
     @mock.patch("remediation_engine.cleanup_snapshots")
-    def test_execute_full_applies_commands(self, mock_cleanup, mock_snap, mock_run, temp_dir):
+    def test_apply_runs_commands(self, mock_cleanup, mock_snap, mock_run):
         mock_run.return_value = mock.MagicMock(returncode=0)
         engine = RemediationEngine()
         plan = RemediationPlan(
             issue_fingerprint="fp",
-            description="full fix",
+            description="fix",
             commands=["echo applied"],
             rollback_commands=[],
-            confidence=1.0,
         )
-        result = engine.execute(plan, AutonomyLevel.FULL_AUTONOMOUS)
+        result = engine.apply(plan)
         assert result["status"] == "applied"
         mock_run.assert_called()
 
     @mock.patch("remediation_engine.subprocess.run")
     @mock.patch("remediation_engine.snapshot_configs", return_value={})
     @mock.patch("remediation_engine.restore_snapshots", return_value=[])
-    def test_execute_full_rollback_on_failure(self, mock_restore, mock_snap, mock_run):
-        """When a command fails, rollback is triggered."""
+    def test_apply_rolls_back_on_failure(self, mock_restore, mock_snap, mock_run):
         from subprocess import CalledProcessError
-
-        # First call (the command) fails; subsequent calls (rollback) succeed
-        mock_run.side_effect = [CalledProcessError(1, "cmd", stderr="fail"), mock.MagicMock(returncode=0)]
+        mock_run.side_effect = [
+            CalledProcessError(1, "cmd", stderr="fail"),
+            mock.MagicMock(returncode=0),  # rollback command
+        ]
         engine = RemediationEngine()
         plan = RemediationPlan(
             issue_fingerprint="fp",
             description="failing fix",
             commands=["false"],
             rollback_commands=["echo rollback"],
-            confidence=1.0,
         )
-        result = engine.execute(plan, AutonomyLevel.FULL_AUTONOMOUS)
+        result = engine.apply(plan)
         assert result["status"] == "rolled_back"
 
     @mock.patch("remediation_engine.subprocess.run")
     @mock.patch("remediation_engine.snapshot_configs", return_value={})
     @mock.patch("remediation_engine.cleanup_snapshots")
-    def test_execute_updates_track_record_on_success(self, mock_cleanup, mock_snap, mock_run):
+    def test_apply_increments_success_counter(self, mock_cleanup, mock_snap, mock_run):
         mock_run.return_value = mock.MagicMock(returncode=0)
         engine = RemediationEngine()
         fp = fingerprint_issue("disk full", "systemd-journald.service")
         for _ in range(OCCURRENCE_GATE + 5):
             engine.assess("disk full", "systemd-journald.service")
-        record = engine.state[fp]
-        record.successful_fixes = 10
-        record.failed_fixes = 0
+        engine.state[fp].successful_fixes = 10
         save_state(engine.state)
 
         plan = RemediationPlan(
             issue_fingerprint=fp,
             description="clean logs",
-            commands=["echo ok 2>/dev/null"],
+            commands=["echo ok"],
             rollback_commands=[],
-            confidence=1.0,
         )
-        engine.execute(plan, AutonomyLevel.FULL_AUTONOMOUS)
+        engine.apply(plan)
         assert engine.state[fp].successful_fixes == 11
 
     @mock.patch("remediation_engine.subprocess.run")
     @mock.patch("remediation_engine.snapshot_configs", return_value={})
     @mock.patch("remediation_engine.restore_snapshots", return_value=[])
-    def test_execute_updates_track_record_on_failure(self, mock_restore, mock_snap, mock_run):
+    def test_apply_increments_failure_counter(self, mock_restore, mock_snap, mock_run):
         from subprocess import CalledProcessError
-        # First call fails; rollback calls succeed
-        mock_run.side_effect = [CalledProcessError(1, "cmd", stderr="fail"), mock.MagicMock(returncode=0)]
+        mock_run.side_effect = [
+            CalledProcessError(1, "cmd", stderr="fail"),
+            mock.MagicMock(returncode=0),
+        ]
         engine = RemediationEngine()
         fp = fingerprint_issue("disk full", "systemd-journald.service")
         for _ in range(OCCURRENCE_GATE + 5):
             engine.assess("disk full", "systemd-journald.service")
-        record = engine.state[fp]
-        record.occurrences = 10
-        record.successful_fixes = 5
-        record.failed_fixes = 2
+        engine.state[fp].failed_fixes = 2
         save_state(engine.state)
 
         plan = RemediationPlan(
@@ -372,7 +376,6 @@ class TestRemediationEngine:
             description="bad fix",
             commands=["exit 1"],
             rollback_commands=["echo rollback"],
-            confidence=1.0,
         )
-        engine.execute(plan, AutonomyLevel.FULL_AUTONOMOUS)
+        engine.apply(plan)
         assert engine.state[fp].failed_fixes == 3

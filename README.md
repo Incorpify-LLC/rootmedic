@@ -1,6 +1,6 @@
 # RootMedic
 
-AI-driven log analysis and autonomous remediation agent for Linux systems. Centralizes system logs, uses LLMs to detect issues and diagnose root causes, then applies fixes — optionally with human approval or fully autonomously.
+AI-driven log analysis and **recommend-only** remediation agent for Linux systems. Centralizes system logs, uses an LLM (with a fingerprint-keyed cache in front of it) to diagnose root causes, and emits declarative `remediation.yaml` artifacts plus alerts. Execution always requires explicit human approval — see [`log-analyzer-plan-A.md`](log-analyzer-plan-A.md).
 
 ## Quickstart
 
@@ -21,14 +21,24 @@ python fetch_normalize_logs.py
 ## Architecture
 
 ```
-Linux Hosts ──▶ Promtail ──▶ Loki ──▶ fetch_normalize_logs.py ──▶ AI Agent (LLM)
-                                         │                              │
-                                         ▼                              ▼
-                                      Grafana                    Remediation
-                                      (dashboards)               (restart, config fix, rollback)
+Linux Hosts ─▶ Alloy/Promtail ─▶ Loki ─▶ ingest.py ─▶ redactor.py
+                                                       │
+                                                       ▼
+                                          vector_store.py (cache)
+                                                       │ miss
+                                                       ▼
+                                       rule-based plan ─or─ llm_client.py
+                                                       │
+                                                       ▼
+                                          remediation_engine.recommend
+                                                  │       │
+                                            alerting    archive.py
+                                          (plugins)   (tiered retention)
 ```
 
-Logs flow from Linux hosts through Promtail into Loki. The Python agent queries Loki for error/warning events, normalizes them into structured JSON, and feeds them to an LLM for root cause analysis and remediation recommendations. Remediation runs through a [graduated autonomy model](remediation_engine.py) — human approval for new issues, dry-run gates for semi-trusted patterns, and full auto-apply once validated.
+The agent queries Loki for error/warning events, normalises and **redacts** them, then tries a fingerprint-keyed known-issue cache. On a cache miss it falls back to the rule-based planner and finally to the LLM. The resulting plan goes through `remediation_engine.recommend()` — which attaches a dry-run trace once an issue is past the occurrence gate, writes `remediation.yaml`, fans an alert through every configured plugin (Slack, generic webhook), and archives the incident with tiered retention.
+
+No commands are executed automatically. `remediation_engine.apply()` is a separate entrypoint intended to be invoked from a CLI or web UI after an operator reviews the generated `remediation.yaml`; it handles config snapshots and rollback on failure.
 
 ## Deployment
 
@@ -86,8 +96,16 @@ ansible-playbook -i Deployment/inventory.ini Deployment/alloy-deploy.yml
 
 ```
 .
-├── fetch_normalize_logs.py   # Agent: fetches logs, triggers remediation
-├── remediation_engine.py     # Graduated autonomy + rollback logic
+├── fetch_normalize_logs.py   # Agent orchestrator (wires pipeline stages)
+├── ingest.py                 # Loki query + log normalization
+├── fingerprint.py            # Stable issue fingerprinting
+├── redactor.py               # PII / secret scrubber (regex)
+├── vector_store.py           # Fingerprint-keyed known-issue cache
+├── llm_client.py             # LiteLLM fallback
+├── remediation_engine.py     # Recommend-only engine (RECOMMEND/VALIDATED), apply() for human-approved exec
+├── alert_plugins.py          # AlertPlugin base + SlackPlugin + WebhookPlugin
+├── alerting.py               # AlertManager (SQLite dedup, fan-out)
+├── archive.py                # Per-incident YAML + tiered retention
 ├── linked-data.py            # Linked list demo with SQLite backend
 ├── create_sample_data.py     # Generates sample data in user_database.db
 ├── Modelfile                 # Ollama model definition for local inference

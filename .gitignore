@@ -9,7 +9,17 @@ __pycache__/
 # Remediation engine runtime artifacts
 remediation_state.json
 dry_run.log
+remediation.yaml
 .rollback_snapshots/
+
+# Known-issue cache (vector_store MVP backend)
+known_issues.json
+
+# Incident archive (per-client, per-month) with tiered retention
+archive/
+
+# Alerting state (SQLite)
+alerts_state.db
 
 # Generated / sample data
 user_database.db

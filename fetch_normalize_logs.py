@@ -1,81 +1,75 @@
-"""RootMedic agent: fetch logs from Loki, normalize, and feed into the
-graduated autonomy remediation engine.
+"""RootMedic agent orchestration.
+
+Wires the pipeline stages defined in the surrounding modules:
+
+    Loki (ingest) → redactor → vector_store lookup
+                  → rule-based planner → llm_client fallback
+                  → RemediationEngine.recommend → AlertManager → archive
+
+The agent never executes a remediation directly. Per ``log-analyzer-plan-A.md``
+all applied fixes go through :meth:`remediation_engine.RemediationEngine.apply`,
+which is invoked from a separate operator-driven entry point (CLI / web UI)
+after a human has reviewed ``remediation.yaml``.
 """
 
-import datetime
-import json
+from __future__ import annotations
 
+import json
+import time
+from typing import Any, Optional
+
+from ingest import fetch_logs, parse_and_normalize  # re-exported for tests
+from redactor import redact_event
+from vector_store import VectorStore, KnownIssue
 from remediation_engine import (
+    AutonomyLevel,
     RemediationEngine,
     RemediationPlan,
-    fingerprint_issue,
 )
+from fingerprint import fingerprint_issue
+from archive import IncidentRecord, archive_incident
+
+# --- Optional integrations ---------------------------------------------------
 
 try:
     from llm_client import load_config as _load_llm_config, propose_plan as _llm_propose_plan
-except ImportError:  # pragma: no cover - llm_client is optional at import time
+except ImportError:  # pragma: no cover
     _load_llm_config = lambda: None
     _llm_propose_plan = lambda event, config=None: None
 
-# --- Configuration -----------------------------------------------------------
-LOKI_URL = "http://localhost:3100/loki/api/v1/query_range"
-QUERY = '{job="systemd-journal"} |= "error" or |= "warning"'
-LIMIT = 100
+try:
+    from alerting import AlertManager
+    from alert_plugins import AlertPayload
+    _ALERTING_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    _ALERTING_AVAILABLE = False
 
 
-def fetch_logs(loki_url: str = LOKI_URL, query: str = QUERY, limit: int = LIMIT):
-    """Query Loki for recent error/warning log entries."""
-    import requests
-
-    now = datetime.datetime.now(datetime.timezone.utc)
-    end = int(now.timestamp() * 1e9)
-    start = int((now - datetime.timedelta(hours=1)).timestamp() * 1e9)
-
-    params = {
-        "query": query,
-        "limit": limit,
-        "start": start,
-        "end": end,
-        "direction": "backward",
-    }
-
-    try:
-        response = requests.get(loki_url, params=params, timeout=10)
-        response.raise_for_status()
-        return response.json().get("data", {}).get("result", [])
-    except Exception as exc:
-        print(f"Error querying Loki: {exc}")
-        return []
+# ---------------------------------------------------------------------------
+# Stage: planner
+# ---------------------------------------------------------------------------
 
 
-def parse_and_normalize(logs):
-    """Convert raw Loki stream entries into structured events."""
-    events = []
-    for stream in logs:
-        stream_labels = stream.get("stream", {})
-        for entry in stream.get("values", []):
-            ts_ns, raw_message = entry
-            events.append({
-                "timestamp": datetime.datetime.fromtimestamp(
-                    int(ts_ns) / 1e9, tz=datetime.timezone.utc
-                ).isoformat(),
-                "host": stream_labels.get("host", "unknown"),
-                "unit": stream_labels.get("systemd_unit", "unknown"),
-                "message": raw_message.strip(),
-            })
-    return events
+def _plan_from_known_issue(event: dict, issue: KnownIssue) -> RemediationPlan:
+    return RemediationPlan(
+        issue_fingerprint=issue.fingerprint,
+        description=issue.description,
+        commands=list(issue.commands),
+        rollback_commands=list(issue.rollback_commands),
+    )
 
 
-def build_remediation_plan(event: dict, engine: RemediationEngine) -> RemediationPlan | None:
-    """Produce a RemediationPlan for a single normalized log event.
+def build_remediation_plan(event: dict, engine: RemediationEngine) -> Optional[RemediationPlan]:
+    """Rule-based remediation suggestion (LLM-free path).
 
-    In production this would call the LLM; here a rule-based stub
-    demonstrates the pipeline.
+    Kept as a deterministic baseline so the agent has *something* sensible to
+    propose when the LLM is offline. The pipeline orchestrator
+    (:func:`run_agent`) tries the vector store first, then this function, then
+    the LLM.
     """
     msg_lower = event["message"].lower()
     fp = fingerprint_issue(event["message"], event["unit"])
 
-    # --- Simple rule-based dispatch ------------------------------------------
     if "connection refused" in msg_lower:
         return RemediationPlan(
             issue_fingerprint=fp,
@@ -110,30 +104,98 @@ def build_remediation_plan(event: dict, engine: RemediationEngine) -> Remediatio
             rollback_commands=[],
         )
 
-    return None  # no plan for unrecognized issues
+    return None
 
 
-def run_agent():
-    """Main agent loop: fetch → normalize → remediate with graduated autonomy.
+# ---------------------------------------------------------------------------
+# Stage: alert + archive
+# ---------------------------------------------------------------------------
 
-    For each event we first try the rule-based stub. If it has nothing, and a
-    LiteLLM config is present, we ask the LLM for a plan as a fallback.
-    """
+
+def _send_alert(
+    manager: Optional["AlertManager"],
+    event: dict,
+    plan: RemediationPlan,
+    level: AutonomyLevel,
+    occurrences: int,
+) -> None:
+    if manager is None or not _ALERTING_AVAILABLE:
+        return
+    payload = AlertPayload(
+        fingerprint=plan.issue_fingerprint,
+        error_summary=event["message"][:200],
+        timestamp=time.time(),
+        proposed_remediation="\n".join(plan.commands),
+        autonomy_level=level.value.upper(),
+        occurrence_count=occurrences,
+        host=event.get("host", ""),
+        unit=event.get("unit", ""),
+    )
+    try:
+        manager.send_alert(payload)
+    except Exception as exc:
+        print(f"[agent] alert dispatch failed: {exc}")
+
+
+def _archive(
+    event: dict,
+    plan: RemediationPlan,
+    level: AutonomyLevel,
+    source: str,
+    client_id: str = "default",
+) -> None:
+    record = IncidentRecord(
+        fingerprint=plan.issue_fingerprint,
+        timestamp=time.time(),
+        host=event.get("host", "unknown"),
+        unit=event.get("unit", "unknown"),
+        message=event.get("message", ""),
+        description=plan.description,
+        commands=list(plan.commands),
+        rollback_commands=list(plan.rollback_commands),
+        autonomy_level=level.value,
+        confidence=plan.confidence,
+        dry_run_output=plan.dry_run_output,
+        source=source,
+    )
+    try:
+        archive_incident(record, client_id=client_id, plan_yaml=plan.to_yaml())
+    except Exception as exc:
+        print(f"[agent] archive write failed: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Pipeline driver
+# ---------------------------------------------------------------------------
+
+
+def run_agent() -> None:
+    """Main agent loop: fetch → redact → lookup → plan → recommend → alert → archive."""
     engine = RemediationEngine()
-    logs = fetch_logs()
-    events = parse_and_normalize(logs)
+    store = VectorStore()
+    llm_config = _load_llm_config()
+    alert_manager: Optional[AlertManager] = None
+    if _ALERTING_AVAILABLE:
+        try:
+            alert_manager = AlertManager()
+            if not alert_manager.plugins:
+                alert_manager = None
+        except Exception as exc:
+            print(f"[agent] alert manager unavailable: {exc}")
+
+    raw_logs = fetch_logs()
+    events = parse_and_normalize(raw_logs)
 
     if not events:
         print("No error/warning events found.")
         return
 
-    llm_config = _load_llm_config()
+    # Sanitize every event *before* it goes anywhere else.
+    events = [redact_event(ev) for ev in events]
 
-    results = []
+    results: list[dict[str, Any]] = []
     for event in events:
-        plan = build_remediation_plan(event, engine)
-        if plan is None and llm_config is not None:
-            plan = _llm_propose_plan(event, llm_config)
+        plan, source = _resolve_plan(event, engine, store, llm_config)
         if plan is None:
             continue
 
@@ -141,16 +203,54 @@ def run_agent():
         plan.confidence = confidence
 
         print(
-            f"[{event['timestamp']}] {event['host']} "
-            f"{event['unit']} → {level.value.upper()} "
-            f"(conf={confidence:.0%}, seen={record.occurrences}x)"
+            f"[{event['timestamp']}] {event['host']} {event['unit']} "
+            f"→ {level.value.upper()} (conf={confidence:.0%}, seen={record.occurrences}x, "
+            f"source={source})"
         )
 
-        result = engine.execute(plan, level)
-        result["event"] = event
-        results.append(result)
+        recommendation = engine.recommend(plan, level)
+        recommendation["event"] = event
+        recommendation["source"] = source
+        results.append(recommendation)
+
+        _send_alert(alert_manager, event, plan, level, record.occurrences)
+        _archive(event, plan, level, source)
+
+        # Learn validated recommendations back into the known-issue store so
+        # subsequent occurrences skip both the rule engine and the LLM.
+        if level == AutonomyLevel.VALIDATED and source != "cached":
+            store.store(
+                event["message"], event["unit"],
+                description=plan.description,
+                commands=plan.commands,
+                rollback_commands=plan.rollback_commands,
+                source="learned",
+            )
 
     print(json.dumps(results, indent=2))
+
+
+def _resolve_plan(
+    event: dict,
+    engine: RemediationEngine,
+    store: VectorStore,
+    llm_config,
+) -> tuple[Optional[RemediationPlan], str]:
+    """Return ``(plan, source)`` for an event, trying cache → rule → LLM."""
+    known = store.lookup(event["message"], event["unit"])
+    if known is not None:
+        return _plan_from_known_issue(event, known), "cached"
+
+    plan = build_remediation_plan(event, engine)
+    if plan is not None:
+        return plan, "rule"
+
+    if llm_config is not None:
+        plan = _llm_propose_plan(event, llm_config)
+        if plan is not None:
+            return plan, "llm"
+
+    return None, "none"
 
 
 if __name__ == "__main__":

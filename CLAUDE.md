@@ -4,19 +4,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-RootMedic is an AI-driven log analysis and autonomous remediation agent for Linux systems. It centralizes system logs, uses LLMs to detect issues and diagnose root causes, then applies fixes — optionally with human approval or fully autonomously.
+RootMedic is an AI-driven log analysis and **recommend-only** remediation agent for Linux systems. It centralizes system logs, uses an LLM (with a vector-store cache in front of it) to diagnose root causes, and emits declarative `remediation.yaml` artifacts plus alerts. Execution of those remediations always requires explicit human approval — see `log-analyzer-plan-A.md`.
 
 **Architecture:**
 
 ```
-Linux Hosts ──▶ Promtail ──▶ Loki ──▶ fetch_normalize_logs.py ──▶ AI Agent (LLM)
-                                         │                              │
-                                         ▼                              ▼
-                                      Grafana                    Remediation
-                                      (dashboards)               (restart, config fix, rollback)
+Linux Hosts ─▶ Alloy/Promtail ─▶ Loki ─▶ ingest.py ─▶ redactor.py
+                                                       │
+                                                       ▼
+                                          vector_store.py (cache)
+                                                       │ miss
+                                                       ▼
+                                       rule-based plan ─or─ llm_client.py
+                                                       │
+                                                       ▼
+                                          remediation_engine.recommend
+                                                  │       │
+                                            alerting    archive.py
+                                          (plugins)   (tiered retention)
 ```
 
-Logs flow from Linux hosts through Promtail into Loki. The Python agent queries Loki for error/warning events, normalizes them into structured JSON, and feeds them to an LLM for root cause analysis. Remediation runs through a graduated autonomy model defined in `remediation_engine.py`.
+Logs flow from Linux hosts through Alloy or Promtail into Loki. The agent (`fetch_normalize_logs.py`) queries Loki, normalises and **redacts** each event, then tries the fingerprint-keyed known-issue cache (`vector_store.py`). On a miss it falls back to the rule-based planner and finally to the LLM. The resulting `RemediationPlan` is run through `remediation_engine.recommend()` which attaches a dry-run trace once an issue is past the occurrence gate, writes `remediation.yaml`, fans an alert out through every configured plugin (Slack / generic webhook), and archives the incident with tiered retention. **No commands are ever executed automatically** — `remediation_engine.apply()` is a separate entrypoint intended to be called from a CLI or web UI after operator review.
 
 ## Tech Stack
 
@@ -40,7 +48,7 @@ source .venv/bin/activate
 ### Install Dependencies
 
 ```bash
-pip install -r requirements.txt   # installs requests, pytest
+pip install -r requirements.txt   # installs requests, PyYAML, pytest
 ```
 
 ### Run Tests
@@ -85,17 +93,32 @@ ollama create rootmedic -f Modelfile
 
 ## High-Level Code Architecture
 
-### Core Modules
+### Pipeline modules
 
-- **`fetch_normalize_logs.py`** — Agent entry point. Queries Loki for error/warning logs, normalizes them into structured JSON, and triggers the remediation engine. Contains the main loop that bridges observability data to the AI analysis layer.
+- **`fetch_normalize_logs.py`** — Agent orchestrator. Wires every pipeline stage together; never executes commands directly. Re-exports `fetch_logs` and `parse_and_normalize` for back-compat.
 
-- **`remediation_engine.py`** — Graduated autonomy engine with three tiers:
-  1. **Recommend only** — human-in-the-loop for first N occurrences of a new issue type.
-  2. **Semi-autonomous** — applies fix only after dry-run simulation or if confidence > 95%.
-  3. **Full autonomous** — after pattern has been validated in production via canary deployments.
-  Includes rollback logic, config snapshots, and state tracking (`remediation_state.json`).
+- **`ingest.py`** — Loki query + log normalization. Pure HTTP/parsing, no remediation dependency.
 
-- **`alerting.py`** — Slack alerting with deduplication and escalation for human-intervention events. Uses SQLite-backed state (`alerts_state.db`) to suppress duplicate alerts within a configurable window and escalate unresolved issues. Configured via `alerts.yml` (keys: `slack_webhook_url`, `dedup_window_minutes`, `escalation_after_minutes`, `grafana_base_url`) or the `SLACK_WEBHOOK_URL` environment variable.
+- **`fingerprint.py`** — Stable issue fingerprinting (used by the engine, the alert dedup state, and the vector store).
+
+- **`redactor.py`** — Regex-based PII / secret scrubber. Runs on every event before it reaches the LLM, the alert channels, or the archive. Patterns cover JWTs, AWS keys, Bearer tokens, `password=`/`token=` style assignments, emails, DB connection strings, and long hex/base64 blobs.
+
+- **`vector_store.py`** — Fingerprint-keyed known-issue cache. Exposes the same `lookup` / `store` / `forget` surface a Qdrant-backed implementation would; swapping in real embeddings is a contained change to those two methods. Persists to `known_issues.json`.
+
+- **`llm_client.py`** — LiteLLM fallback. Consulted only when both the vector store and the rule-based planner come up empty.
+
+- **`remediation_engine.py`** — Recommend-only engine with two autonomy levels:
+  1. **RECOMMEND** — new or rarely-seen issue; emits `remediation.yaml`, no dry-run.
+  2. **VALIDATED** — occurrence count past the gate; attaches a dry-run trace.
+  Neither tier auto-applies. `apply(plan)` is the only path that actually runs subprocess and is intended to be invoked from a CLI/web UI after explicit operator approval; it owns the snapshot + rollback logic.
+
+- **`alert_plugins.py`** — `AlertPlugin` base class, `SlackPlugin`, `WebhookPlugin`, and `build_default_plugins(config)` registry. Adding a new channel (email, IRC, PagerDuty) is a self-contained subclass.
+
+- **`alerting.py`** — `AlertManager` plus SQLite-backed dedup state (`alerts_state.db`). Fans every alert out to every configured plugin; failures in one plugin do not block the others. Configured via `alerts.yml` (`slack_webhook_url`, `webhook_url`, `webhook_headers`, `dedup_window_minutes`, `escalation_after_minutes`, `grafana_base_url`) or the `SLACK_WEBHOOK_URL` / `ALERT_WEBHOOK_URL` environment variables.
+
+- **`archive.py`** — Per-incident YAML archive under `archive/<client>/<YYYY-MM>/<fp>-<ts>/` (`incident.yaml`, `remediation.yaml`, `dry_run.log`). `prune_archive(tier=)` enforces 30d / 180d / 365d retention windows.
+
+### Demo / data modules
 
 - **`linked-data.py`** — Standalone linked list implementation backed by SQLite. Used for data-structure demonstrations and testing SQLite connectivity.
 
@@ -123,10 +146,13 @@ ollama create rootmedic -f Modelfile
 
 ### Tests
 
-- **`tests/test_remediation_engine.py`** — Tests for the graduated autonomy engine, dry-run gates, and rollback behavior.
-- **`tests/test_fetch_normalize_logs.py`** — Tests for log fetching and normalization logic.
-- **`test_alerting.py`** (repo root) — Tests for the Slack alerting module (dedup, escalation, block building).
-- **`tests/conftest.py`** — Shared pytest fixtures (temp dir, sample logs, runtime state cleanup).
+- **`tests/test_remediation_engine.py`** — Recommend/apply paths, dry-run gating, snapshot/rollback, fingerprinting.
+- **`tests/test_fetch_normalize_logs.py`** — Log normalization, rule-based planner, vector-store-first resolution, agent pipeline.
+- **`tests/test_redactor.py`** — Secret/PII patterns and event sanitization.
+- **`tests/test_vector_store.py`** — Known-issue cache lookup, persistence, retention.
+- **`tests/test_archive.py`** — Incident YAML output and tier-based pruning.
+- **`test_alerting.py`** (repo root) — `AlertManager`, plugin registry, Slack/Webhook plugins, dedup and escalation.
+- **`tests/conftest.py`** — Shared pytest fixtures and runtime-state cleanup (also clears `known_issues.json`, `archive/`, `remediation.yaml`).
 
 ## Key Conventions
 
@@ -139,7 +165,10 @@ ollama create rootmedic -f Modelfile
 
 These files are written by the agent at runtime and should not be committed or treated as source:
 
-- `remediation_state.json` — tracks issue-pattern occurrence counts and autonomy-tier progression. Deleting it resets the engine to "recommend only" for every pattern.
-- `dry_run.log` — dry-run simulation output from the remediation engine.
-- `.rollback_snapshots/` — config snapshots captured before applying a fix; consumed by rollback logic.
+- `remediation_state.json` — issue-pattern occurrence counts and success/fail history. Deleting it resets every pattern to RECOMMEND.
+- `dry_run.log` — most recent dry-run simulation output.
+- `remediation.yaml` — most recent declarative plan emitted by `recommend()`. A per-incident copy also lives under `archive/`.
+- `known_issues.json` — fingerprint-keyed known-issue cache (the MVP backend for `vector_store.py`).
+- `archive/<client>/<YYYY-MM>/<fp>-<ts>/` — per-incident records (`incident.yaml`, `remediation.yaml`, optional `dry_run.log`). Pruned by `archive.prune_archive(tier=)`.
+- `.rollback_snapshots/` — config snapshots captured before `apply()` runs; consumed by rollback logic.
 - `user_database.db`, `alerts_state.db` — SQLite stores; regenerable via `create_sample_data.py` and the alerting module respectively.

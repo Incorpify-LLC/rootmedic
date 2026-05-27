@@ -1,15 +1,18 @@
-"""Tests for fetch_normalize_logs.py — agent pipeline."""
+"""Tests for fetch_normalize_logs.py — agent pipeline orchestration."""
 
+from pathlib import Path
 from unittest import mock
 
 import pytest
 
 from fetch_normalize_logs import (
+    _resolve_plan,
     build_remediation_plan,
     parse_and_normalize,
     run_agent,
 )
 from remediation_engine import RemediationEngine, RemediationPlan
+from vector_store import VectorStore
 
 
 # --------------------------------------------------------------- parse_and_normalize
@@ -34,10 +37,7 @@ class TestParseAndNormalize:
 
     def test_defaults_for_missing_labels(self):
         logs = [
-            {
-                "stream": {},
-                "values": [["1714000000000000000", "bare message"]],
-            }
+            {"stream": {}, "values": [["1714000000000000000", "bare message"]]},
         ]
         events = parse_and_normalize(logs)
         assert events[0]["host"] == "unknown"
@@ -100,6 +100,42 @@ class TestBuildRemediationPlan:
         assert plan is not None
 
 
+# -------------------------------------------------------------- _resolve_plan
+
+class TestResolvePlan:
+    def test_cache_hit_wins_over_rule(self):
+        store = VectorStore()
+        store.store(
+            "connection refused",
+            "nginx.service",
+            description="cached fix",
+            commands=["echo cached"],
+            rollback_commands=[],
+            source="seed",
+        )
+        engine = RemediationEngine()
+        event = {"message": "connection refused", "unit": "nginx.service"}
+        plan, source = _resolve_plan(event, engine, store, llm_config=None)
+        assert source == "cached"
+        assert plan.description == "cached fix"
+
+    def test_rule_used_when_no_cache_hit(self):
+        store = VectorStore()
+        engine = RemediationEngine()
+        event = {"message": "connection refused", "unit": "nginx.service"}
+        plan, source = _resolve_plan(event, engine, store, llm_config=None)
+        assert source == "rule"
+        assert plan is not None
+
+    def test_returns_none_when_nothing_matches(self):
+        store = VectorStore()
+        engine = RemediationEngine()
+        event = {"message": "all good here", "unit": "happy.service"}
+        plan, source = _resolve_plan(event, engine, store, llm_config=None)
+        assert plan is None
+        assert source == "none"
+
+
 # ---------------------------------------------------------------------- run_agent
 
 class TestRunAgent:
@@ -115,14 +151,13 @@ class TestRunAgent:
         mock_fetch.return_value = sample_logs
         run_agent()
         out = capsys.readouterr().out
-        # At least one event should produce output
         assert "nginx.service" in out or "node1" in out
 
     @mock.patch("fetch_normalize_logs.fetch_logs")
-    def test_output_is_valid_json(self, mock_fetch, capsys, sample_logs):
-        mock_fetch.return_value = sample_logs
+    def test_archive_is_written(self, mock_fetch, sample_logs):
         mock_fetch.return_value = sample_logs
         run_agent()
-        out = capsys.readouterr().out
-        # run_agent prints status lines + JSON results array
-        assert len(out) > 0, "Expected agent output with remediation results"
+        # At least one event should produce an archived incident
+        assert Path("archive").exists()
+        # And the latest remediation.yaml should be on disk.
+        assert Path("remediation.yaml").exists()

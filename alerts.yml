@@ -3,6 +3,14 @@
 # Slack webhook URL (can also be set via SLACK_WEBHOOK_URL env var)
 slack_webhook_url: ""
 
+# Generic JSON webhook URL — receives the full payload (PagerDuty, Opsgenie,
+# custom relay, etc.). Can also be set via ALERT_WEBHOOK_URL env var.
+webhook_url: ""
+
+# Optional headers sent with every generic-webhook POST (e.g. auth tokens).
+# webhook_headers:
+#   Authorization: "Bearer <token>"
+
 # Deduplication window - suppress duplicate alerts for this duration
 dedup_window_minutes: 15
 

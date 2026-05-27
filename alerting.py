@@ -1,26 +1,35 @@
-"""Slack alerting for RootMedic human-intervention events.
+"""Alert manager for RootMedic human-intervention events.
 
-Sends alerts to Slack when an issue requires human approval, including:
-- Error summary and timestamp
-- Grafana dashboard link
-- LLM root cause analysis
-- Proposed remediation commands
-- Deduplication counter and silence window
+The manager owns:
 
-Deduplication state persists in SQLite across restarts.
+* Configuration loading (``alerts.yml`` + environment variables).
+* SQLite-backed deduplication / escalation state (``alerts_state.db``).
+* Fan-out to every configured plugin from :mod:`alert_plugins`.
+
+Channel-specific formatting and transport live in :mod:`alert_plugins`. This
+module is intentionally channel-agnostic — adding email, IRC or PagerDuty is
+a matter of dropping another :class:`alert_plugins.AlertPlugin` subclass into
+the registry, not editing :class:`AlertManager`.
 """
 
+from __future__ import annotations
+
 import hashlib
-import json
 import os
 import sqlite3
 import time
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
-import requests
+from alert_plugins import (
+    AlertPayload,
+    AlertPlugin,
+    SlackPlugin,
+    WebhookPlugin,
+    build_default_plugins,
+    build_slack_blocks,
+)
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -33,79 +42,71 @@ DEFAULT_ESCALATION_AFTER_MINUTES = 30
 DEFAULT_GRAFANA_BASE_URL = "http://localhost:3000"
 
 
-# ---------------------------------------------------------------------------
-# Data structures
-# ---------------------------------------------------------------------------
-
 @dataclass
 class AlertConfig:
     """Configuration for alerting behavior."""
 
     slack_webhook_url: Optional[str] = None
+    webhook_url: Optional[str] = None
+    webhook_headers: Optional[dict[str, str]] = None
     dedup_window_minutes: int = DEFAULT_DEDUP_WINDOW_MINUTES
     escalation_after_minutes: int = DEFAULT_ESCALATION_AFTER_MINUTES
     grafana_base_url: str = DEFAULT_GRAFANA_BASE_URL
 
     @classmethod
     def load(cls) -> "AlertConfig":
-        """Load from alerts.yml or environment variables."""
+        """Load from ``alerts.yml`` and overlay environment variables."""
         config: dict[str, Any] = {}
 
-        # Try to load from YAML file
         if ALERTS_CONFIG.exists():
             try:
                 import yaml
                 with open(ALERTS_CONFIG) as f:
-                    yaml_config = yaml.safe_load(f) or {}
-                    config.update(yaml_config)
+                    config.update(yaml.safe_load(f) or {})
             except ImportError:
-                # Fallback: parse simple key: value format
                 for line in ALERTS_CONFIG.read_text().splitlines():
                     if ":" in line and not line.strip().startswith("#"):
                         key, _, value = line.partition(":")
                         config[key.strip()] = value.strip().strip('"\'')
 
-        # Environment variables override file config
         config["slack_webhook_url"] = (
             os.environ.get("SLACK_WEBHOOK_URL")
             or config.get("slack_webhook_url")
+        )
+        config["webhook_url"] = (
+            os.environ.get("ALERT_WEBHOOK_URL")
+            or config.get("webhook_url")
         )
         config["grafana_base_url"] = (
             os.environ.get("GRAFANA_BASE_URL")
             or config.get("grafana_base_url", DEFAULT_GRAFANA_BASE_URL)
         )
 
+        webhook_headers = config.get("webhook_headers") or None
+        if isinstance(webhook_headers, dict):
+            webhook_headers = {str(k): str(v) for k, v in webhook_headers.items()}
+        else:
+            webhook_headers = None
+
         return cls(
             slack_webhook_url=config.get("slack_webhook_url"),
+            webhook_url=config.get("webhook_url"),
+            webhook_headers=webhook_headers,
             dedup_window_minutes=int(config.get("dedup_window_minutes", DEFAULT_DEDUP_WINDOW_MINUTES)),
             escalation_after_minutes=int(config.get("escalation_after_minutes", DEFAULT_ESCALATION_AFTER_MINUTES)),
             grafana_base_url=config.get("grafana_base_url", DEFAULT_GRAFANA_BASE_URL),
         )
 
 
-@dataclass
-class AlertPayload:
-    """Data needed to construct an alert."""
-
-    fingerprint: str
-    error_summary: str
-    timestamp: float
-    grafana_dashboard_uid: str = "system-logs"  # default Loki dashboard
-    llm_root_cause: str = ""
-    proposed_remediation: str = ""
-    autonomy_level: str = "RECOMMEND"
-    occurrence_count: int = 1
-
-
 # ---------------------------------------------------------------------------
 # SQLite-backed deduplication state
 # ---------------------------------------------------------------------------
 
+
 def init_alerts_db() -> None:
-    """Initialize the alerts state database."""
+    """Initialise the alerts state database."""
     conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("""
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS alert_history (
             fingerprint TEXT PRIMARY KEY,
             last_alert_time REAL,
@@ -119,15 +120,12 @@ def init_alerts_db() -> None:
 
 
 def get_alert_state(fingerprint: str) -> dict[str, Any]:
-    """Get the current state for a fingerprint."""
+    """Return the persisted alert state for ``fingerprint`` (defaults if absent)."""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT * FROM alert_history WHERE fingerprint = ?",
-        (fingerprint,)
-    )
-    row = cursor.fetchone()
+    row = conn.execute(
+        "SELECT * FROM alert_history WHERE fingerprint = ?", (fingerprint,)
+    ).fetchone()
     conn.close()
 
     if row:
@@ -147,24 +145,18 @@ def update_alert_state(
     escalation_time: Optional[float] = None,
     reset: bool = False,
 ) -> None:
-    """Update or insert alert state for a fingerprint."""
+    """Insert or update the alert-state row for a fingerprint."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
     if reset:
-        cursor.execute(
-            "DELETE FROM alert_history WHERE fingerprint = ?",
-            (fingerprint,)
-        )
+        cursor.execute("DELETE FROM alert_history WHERE fingerprint = ?", (fingerprint,))
     else:
-        # Get current count
-        cursor.execute(
+        row = cursor.execute(
             "SELECT alert_count FROM alert_history WHERE fingerprint = ?",
             (fingerprint,)
-        )
-        row = cursor.fetchone()
+        ).fetchone()
         count = (row[0] + 1) if row else 1
-
         cursor.execute("""
             INSERT OR REPLACE INTO alert_history
             (fingerprint, last_alert_time, alert_count, last_escalation_time, resolved)
@@ -176,203 +168,123 @@ def update_alert_state(
 
 
 def mark_resolved(fingerprint: str) -> None:
-    """Mark an issue as resolved, resetting dedup state."""
+    """Reset dedup state for an issue once it has been confirmed fixed."""
     update_alert_state(fingerprint, 0, reset=True)
 
 
 # ---------------------------------------------------------------------------
-# Slack notification
+# Back-compat helpers
 # ---------------------------------------------------------------------------
-
-def send_slack_message(webhook_url: str, blocks: list[dict[str, Any]]) -> bool:
-    """Send a Slack message via incoming webhook.
-
-    Returns True if successful, False otherwise.
-    """
-    payload = {"blocks": blocks}
-
-    try:
-        response = requests.post(
-            webhook_url,
-            json=payload,
-            headers={"Content-Type": "application/json"},
-            timeout=10,
-        )
-        response.raise_for_status()
-        return True
-    except requests.RequestException as e:
-        print(f"[ALERT] Slack webhook failed: {e}")
-        return False
 
 
 def build_alert_blocks(payload: AlertPayload, config: AlertConfig) -> list[dict[str, Any]]:
-    """Build Slack block kit message for an alert."""
-    now = datetime.fromtimestamp(payload.timestamp)
-    time_str = now.strftime("%Y-%m-%d %H:%M:%S")
+    """Back-compat shim: build Slack blocks via :func:`alert_plugins.build_slack_blocks`.
 
-    # Determine if this is an escalation
+    Determines escalation by looking at the persisted state, the same way the
+    pre-refactor implementation did.
+    """
     state = get_alert_state(payload.fingerprint)
     is_escalation = False
     if state["last_alert_time"]:
         elapsed_minutes = (payload.timestamp - state["last_alert_time"]) / 60
         if elapsed_minutes >= config.escalation_after_minutes:
             is_escalation = True
-
-    blocks: list[dict[str, Any]] = []
-
-    # Header
-    header_text = (
-        "[ESCALATION] Human Intervention Required" if is_escalation
-        else "Human Intervention Required"
+    return build_slack_blocks(
+        payload, config.grafana_base_url, config.dedup_window_minutes, is_escalation,
     )
-    blocks.append({
-        "type": "header",
-        "text": {"type": "plain_text", "text": header_text, "emoji": True},
-    })
 
-    # Error summary
-    blocks.append({
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": f"*Error:* {payload.error_summary}",
-        },
-    })
 
-    # Metadata
-    blocks.append({
-        "type": "section",
-        "fields": [
-            {"type": "mrkdwn", "text": f"*Time:* {time_str}"},
-            {"type": "mrkdwn", "text": f"*Occurrences:* {payload.occurrence_count}"},
-            {"type": "mrkdwn", "text": f"*Autonomy Level:* {payload.autonomy_level}"},
-            {"type": "mrkdwn", "text": f"*Fingerprint:* `{payload.fingerprint}`"},
-        ],
-    })
-
-    # Root cause analysis
-    if payload.llm_root_cause:
-        blocks.append({
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"*Root Cause Analysis:*\n{payload.llm_root_cause}",
-            },
-        })
-
-    # Proposed remediation
-    if payload.proposed_remediation:
-        blocks.append({
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"*Proposed Remediation:*\n```\n{payload.proposed_remediation}\n```",
-            },
-        })
-
-    # Grafana link
-    grafana_url = f"{config.grafana_base_url}/d/{payload.grafana_dashboard_uid}"
-    blocks.append({
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": f"<{grafana_url}|:bar_chart: View Grafana Dashboard>",
-        },
-    })
-
-    # Dedup info
-    dedup_until = payload.timestamp + (config.dedup_window_minutes * 60)
-    dedup_str = datetime.fromtimestamp(dedup_until).strftime("%H:%M:%S")
-    blocks.append({
-        "type": "context",
-        "elements": [
-            {
-                "type": "mrkdwn",
-                "text": f"Silenced until {dedup_str} if same issue recurs (dedup window: {config.dedup_window_minutes} min)",
-            },
-        ],
-    })
-
-    return blocks
+def send_slack_message(webhook_url: str, blocks: list[dict[str, Any]]) -> bool:
+    """Back-compat shim used by older callers and tests."""
+    import requests
+    try:
+        response = requests.post(
+            webhook_url,
+            json={"blocks": blocks},
+            headers={"Content-Type": "application/json"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        return True
+    except requests.RequestException as exc:
+        print(f"[ALERT] Slack webhook failed: {exc}")
+        return False
 
 
 # ---------------------------------------------------------------------------
 # AlertManager
 # ---------------------------------------------------------------------------
 
-class AlertManager:
-    """Manages Slack alerts with deduplication and escalation."""
 
-    def __init__(self, config: Optional[AlertConfig] = None) -> None:
+class AlertManager:
+    """Manages alerts with deduplication, escalation, and plugin fan-out."""
+
+    def __init__(
+        self,
+        config: Optional[AlertConfig] = None,
+        plugins: Optional[list[AlertPlugin]] = None,
+    ) -> None:
         self.config = config or AlertConfig.load()
+        self.plugins: list[AlertPlugin] = (
+            plugins if plugins is not None else build_default_plugins(self.config)
+        )
         init_alerts_db()
 
-    def should_send_alert(self, fingerprint: str) -> tuple[bool, bool]:
-        """Check if an alert should be sent.
+    # -- dedup logic ------------------------------------------------------
 
-        Returns (should_send, is_escalation).
-        """
-        if not self.config.slack_webhook_url:
+    def should_send_alert(self, fingerprint: str) -> tuple[bool, bool]:
+        """Decide whether to send. Returns ``(should_send, is_escalation)``."""
+        if not self.plugins:
             return False, False
 
         state = get_alert_state(fingerprint)
         now = time.time()
 
-        # First alert for this fingerprint
         if state["last_alert_time"] is None:
             return True, False
-
-        # Check if resolved
         if state["resolved"]:
             return True, False
 
-        # Check dedup window
         elapsed_minutes = (now - state["last_alert_time"]) / 60
         if elapsed_minutes < self.config.dedup_window_minutes:
-            # Still in dedup window - suppress
             return False, False
-
-        # Check escalation
         if elapsed_minutes >= self.config.escalation_after_minutes:
             return True, True
-
-        # Outside dedup but before escalation - send normal alert
         return True, False
 
-    def send_alert(self, payload: AlertPayload) -> bool:
-        """Send an alert if not suppressed by deduplication.
+    # -- send -------------------------------------------------------------
 
-        Returns True if alert was sent successfully.
-        """
+    def send_alert(self, payload: AlertPayload) -> bool:
+        """Send via every configured plugin. Returns True if **any** succeeded."""
         should_send, is_escalation = self.should_send_alert(payload.fingerprint)
 
         if not should_send:
             print(f"[ALERT] Suppressed (dedup window active) for {payload.fingerprint}")
             return False
 
-        # Update payload for escalation
         if is_escalation:
             payload.autonomy_level = "ESCALATION"
 
-        # Build and send
-        blocks = build_alert_blocks(payload, self.config)
-        success = send_slack_message(self.config.slack_webhook_url, blocks)
+        any_success = False
+        for plugin in self.plugins:
+            try:
+                ok = plugin.send(payload, is_escalation=is_escalation)
+            except Exception as exc:  # one plugin failing must not break others
+                print(f"[ALERT][{plugin.name}] raised: {exc}")
+                ok = False
+            any_success = any_success or ok
+            print(f"[ALERT][{plugin.name}] {'sent' if ok else 'failed'} for {payload.fingerprint}")
 
-        if success:
+        if any_success:
             now = time.time()
-            escalation_time = now if is_escalation else None
-            update_alert_state(payload.fingerprint, now, escalation_time)
-            print(f"[ALERT] Sent to Slack for {payload.fingerprint}")
-        else:
-            print(f"[ALERT] Failed to send for {payload.fingerprint}")
-
-        return success
+            update_alert_state(payload.fingerprint, now, now if is_escalation else None)
+        return any_success
 
     def send_test_alert(self) -> bool:
-        """Send a test alert to verify Slack integration."""
+        """Send a synthetic alert through every plugin (smoke test)."""
         payload = AlertPayload(
             fingerprint="test-" + hashlib.sha256(str(time.time()).encode()).hexdigest()[:8],
-            error_summary="Test alert - verify Slack integration",
+            error_summary="Test alert - verify channels",
             timestamp=time.time(),
             llm_root_cause="This is a test message to verify the alerting system is working correctly.",
             proposed_remediation="echo 'No action needed - this is a test'",
@@ -395,23 +307,9 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="RootMedic Alerting System")
-    parser.add_argument(
-        "--test",
-        action="store_true",
-        help="Send a test alert to Slack",
-    )
-    parser.add_argument(
-        "--config",
-        type=str,
-        default=None,
-        help="Path to alerts.yml config file",
-    )
-    parser.add_argument(
-        "--show-config",
-        action="store_true",
-        help="Print current configuration",
-    )
-
+    parser.add_argument("--test", action="store_true", help="Send a test alert")
+    parser.add_argument("--config", type=str, default=None, help="Path to alerts.yml")
+    parser.add_argument("--show-config", action="store_true", help="Print current configuration")
     args = parser.parse_args()
 
     if args.config:
@@ -421,15 +319,16 @@ if __name__ == "__main__":
 
     if args.show_config:
         print("Current Alert Configuration:")
-        print(f"  Slack Webhook: {'configured' if config.slack_webhook_url else 'NOT SET'}")
-        print(f"  Dedup Window: {config.dedup_window_minutes} minutes")
-        print(f"  Escalation After: {config.escalation_after_minutes} minutes")
-        print(f"  Grafana Base URL: {config.grafana_base_url}")
+        print(f"  Slack Webhook : {'configured' if config.slack_webhook_url else 'NOT SET'}")
+        print(f"  Generic Webhook: {'configured' if config.webhook_url else 'NOT SET'}")
+        print(f"  Dedup Window  : {config.dedup_window_minutes} minutes")
+        print(f"  Escalation    : {config.escalation_after_minutes} minutes")
+        print(f"  Grafana Base  : {config.grafana_base_url}")
     elif args.test:
-        if not config.slack_webhook_url:
-            print("Error: SLACK_WEBHOOK_URL not set")
-            exit(1)
         manager = AlertManager(config)
+        if not manager.plugins:
+            print("Error: no alert plugins configured (set SLACK_WEBHOOK_URL or ALERT_WEBHOOK_URL)")
+            exit(1)
         success = manager.send_test_alert()
         exit(0 if success else 1)
     else:

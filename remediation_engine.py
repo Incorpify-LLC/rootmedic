@@ -1,30 +1,36 @@
-"""Graduated autonomy model for RootMedic auto-remediation.
+"""Recommend-only remediation engine for RootMedic.
 
-Three autonomy levels:
-  RECOMMEND       – human-in-the-loop for first N occurrences of a new issue type.
-  SEMI_AUTONOMOUS – apply fix only after a successful dry-run or if confidence > 95%.
-  FULL_AUTONOMOUS – validated patterns, deployed via canary in production.
+Per ``log-analyzer-plan-A.md`` the engine is **never** allowed to apply a fix
+without an explicit human-approved call to :meth:`RemediationEngine.apply`.
+The :meth:`assess` + :meth:`recommend` path is the default flow used by the
+agent loop: it tracks issue occurrences, attaches a dry-run trace once the
+pattern has been seen often enough, and emits a YAML artifact suitable for
+review.
+
+Two autonomy levels remain:
+
+* ``RECOMMEND``  – new or rarely-seen issue, recommendation only.
+* ``VALIDATED``  – occurrence count is past the gate; dry-run trace and
+  historical confidence score are attached to the recommendation.
+
+Neither level executes commands. :meth:`apply` is the only entrypoint that
+runs subprocess and is intended to be invoked by an operator (CLI, web UI,
+or an explicit ``--auto-approve`` flag in CI) once they have reviewed the
+generated ``remediation.yaml``.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
-import os
 import shutil
 import subprocess
 import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
-# Optional alerting integration
-try:
-    from alerting import AlertManager, AlertPayload
-    ALERTING_AVAILABLE = True
-except ImportError:
-    ALERTING_AVAILABLE = False
+from fingerprint import fingerprint_issue
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -32,9 +38,10 @@ except ImportError:
 
 STATE_FILE = Path("remediation_state.json")
 CONFIDENCE_THRESHOLD = 0.95
-OCCURRENCE_GATE = 3  # first N occurrences stay in RECOMMEND
+OCCURRENCE_GATE = 3  # below this, issue stays in RECOMMEND
 SNAPSHOT_DIR = Path(".rollback_snapshots")
 DRY_RUN_LOG = Path("dry_run.log")
+REMEDIATION_YAML = Path("remediation.yaml")
 
 # Known config files to snapshot before remediation
 PROTECTED_PATHS = [
@@ -44,20 +51,20 @@ PROTECTED_PATHS = [
     "/etc/ssh/sshd_config",
 ]
 
+
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
 
 
 class AutonomyLevel(Enum):
-    RECOMMEND = "recommend"           # human must approve
-    SEMI_AUTONOMOUS = "semi"          # dry-run or high-confidence gate
-    FULL_AUTONOMOUS = "full"          # validated pattern, auto-apply
+    RECOMMEND = "recommend"   # new pattern, raw recommendation only
+    VALIDATED = "validated"   # past OCCURRENCE_GATE, dry-run + confidence attached
 
 
 @dataclass
 class IssueRecord:
-    """Tracks how many times an issue type has been seen and its history."""
+    """Tracks how many times an issue type has been seen and its fix history."""
 
     fingerprint: str
     occurrences: int = 0
@@ -74,13 +81,13 @@ class IssueRecord:
 
 @dataclass
 class RemediationPlan:
-    """A remediation action with its rollback counterpart."""
+    """A remediation proposal with its rollback counterpart."""
 
     issue_fingerprint: str
     description: str
     commands: list[str]
     rollback_commands: list[str]
-    config_snapshots: dict[str, str] = field(default_factory=dict)  # path -> backup path
+    config_snapshots: dict[str, str] = field(default_factory=dict)
     confidence: float = 0.0
     dry_run_output: str = ""
 
@@ -94,6 +101,14 @@ class RemediationPlan:
             "confidence": self.confidence,
             "dry_run_output": self.dry_run_output,
         }
+
+    def to_yaml(self) -> str:
+        """Render the plan as YAML (declarative ``remediation.yaml`` artifact)."""
+        try:
+            import yaml
+            return yaml.safe_dump(self.to_dict(), sort_keys=False)
+        except ImportError:
+            return json.dumps(self.to_dict(), indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -109,34 +124,9 @@ def load_state() -> dict[str, IssueRecord]:
 
 
 def save_state(state: dict[str, IssueRecord]) -> None:
-    STATE_FILE.write_text(json.dumps(
-        {k: v.__dict__ for k, v in state.items()}, indent=2, default=str
-    ))
-
-
-# ---------------------------------------------------------------------------
-# Fingerprinting
-# ---------------------------------------------------------------------------
-
-
-def fingerprint_issue(log_message: str, unit: str = "") -> str:
-    """Create a stable fingerprint for an issue type from its log pattern.
-
-    Strips timestamps, PIDs, and IPs so that the same *kind* of issue
-    always hashes to the same fingerprint.
-    """
-    import re
-
-    cleaned = log_message.lower()
-    # Strip variable data: timestamps, PIDs, IPs, hex memory addresses
-    cleaned = re.sub(r"\b\d{4}-\d{2}-\d{2}[t ]\d{2}:\d{2}:\d{2}", "<TS>", cleaned)
-    cleaned = re.sub(r"pid[= ]?\d+", "pid=<PID>", cleaned)
-    cleaned = re.sub(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b", "<IP>", cleaned)
-    cleaned = re.sub(r"0x[0-9a-f]+", "<HEX>", cleaned)
-    cleaned = re.sub(r"\d+", "<N>", cleaned)
-
-    raw = f"{unit}:{cleaned}"
-    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+    STATE_FILE.write_text(
+        json.dumps({k: v.__dict__ for k, v in state.items()}, indent=2, default=str)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -153,17 +143,17 @@ def compute_confidence(record: IssueRecord, match_quality: float = 1.0) -> float
 
 
 # ---------------------------------------------------------------------------
-# Graduated autonomy decision
+# Autonomy decision
 # ---------------------------------------------------------------------------
 
 
-def determine_autonomy(record: IssueRecord, confidence: float) -> AutonomyLevel:
-    """Decide which autonomy level applies for this issue."""
+def determine_autonomy(record: IssueRecord, confidence: float = 0.0) -> AutonomyLevel:
+    """Return ``RECOMMEND`` until the issue has been seen ``OCCURRENCE_GATE``
+    times, then ``VALIDATED``. Neither tier auto-applies — both are advisory.
+    """
     if record.occurrences < OCCURRENCE_GATE:
         return AutonomyLevel.RECOMMEND
-    if confidence >= CONFIDENCE_THRESHOLD and record.success_rate >= CONFIDENCE_THRESHOLD:
-        return AutonomyLevel.FULL_AUTONOMOUS
-    return AutonomyLevel.SEMI_AUTONOMOUS
+    return AutonomyLevel.VALIDATED
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +162,7 @@ def determine_autonomy(record: IssueRecord, confidence: float) -> AutonomyLevel:
 
 
 def snapshot_configs(paths: list[str]) -> dict[str, str]:
-    """Copy config files into SNAPSHOT_DIR and return {original: backup} map."""
+    """Copy config files into SNAPSHOT_DIR and return ``{original: backup}``."""
     SNAPSHOT_DIR.mkdir(exist_ok=True)
     snapshots: dict[str, str] = {}
     ts = int(time.time())
@@ -219,8 +209,7 @@ def cleanup_snapshots(snapshots: dict[str, str]) -> None:
 
 def dry_run(plan: RemediationPlan) -> str:
     """Simulate every command and return a trace of what *would* happen."""
-    lines: list[str] = []
-    lines.append(f"=== DRY-RUN for: {plan.description} ===")
+    lines: list[str] = [f"=== DRY-RUN for: {plan.description} ==="]
 
     for cmd in plan.commands:
         lines.append(f"\n> {cmd}")
@@ -242,10 +231,12 @@ def dry_run(plan: RemediationPlan) -> str:
 
 
 class RemediationEngine:
-    """Orchestrates the graduated autonomy pipeline."""
+    """Orchestrates assessment, recommendation and (human-approved) apply."""
 
     def __init__(self) -> None:
         self.state: dict[str, IssueRecord] = load_state()
+
+    # -- state ------------------------------------------------------------
 
     def _record_event(self, fingerprint: str) -> IssueRecord:
         now = time.time()
@@ -262,45 +253,66 @@ class RemediationEngine:
     def assess(
         self, log_message: str, unit: str = "",
     ) -> tuple[AutonomyLevel, IssueRecord, float]:
-        """Given a log event, return (level, record, confidence)."""
+        """Given a log event, return ``(level, record, confidence)``."""
         fp = fingerprint_issue(log_message, unit)
         record = self._record_event(fp)
         confidence = compute_confidence(record)
         level = determine_autonomy(record, confidence)
         return level, record, confidence
 
-    def execute(self, plan: RemediationPlan, level: AutonomyLevel) -> dict[str, Any]:
-        """Execute a remediation plan according to the autonomy level.
+    # -- recommend (default, never executes) ------------------------------
 
-        Returns a result dict with status and detail.
+    def recommend(
+        self,
+        plan: RemediationPlan,
+        level: AutonomyLevel,
+        yaml_path: Path | None = REMEDIATION_YAML,
+    ) -> dict[str, Any]:
+        """Produce a recommendation. Never runs any command.
+
+        Attaches a dry-run trace when ``level == VALIDATED`` and writes the
+        plan to ``yaml_path`` (set to ``None`` to skip the artifact).
         """
-        result: dict[str, Any] = {"fingerprint": plan.issue_fingerprint, "status": "skipped"}
-
-        # --- RECOMMEND --------------------------------------------------
-        if level == AutonomyLevel.RECOMMEND:
-            result["status"] = "recommended"
-            result["message"] = (
-                f"Human approval required for: {plan.description}\n"
-                f"Proposed commands: {plan.commands}\n"
-                f"Rollback: {plan.rollback_commands}"
-            )
-            return result
-
-        # --- SEMI-AUTONOMOUS --------------------------------------------
-        if level == AutonomyLevel.SEMI_AUTONOMOUS:
+        if level == AutonomyLevel.VALIDATED:
             plan.dry_run_output = dry_run(plan)
-            if plan.confidence < CONFIDENCE_THRESHOLD:
-                result["status"] = "dry_run"
-                result["dry_run"] = plan.dry_run_output
-                result["message"] = (
-                    f"Dry-run passed but confidence {plan.confidence:.1%} "
-                    f"< {CONFIDENCE_THRESHOLD:.0%}. Awaiting approval."
-                )
-                return result
 
-        # --- FULL-AUTONOMOUS (or semi with high confidence) -------------
+        if yaml_path is not None:
+            yaml_path.write_text(plan.to_yaml())
+
+        status = "validated_recommendation" if level == AutonomyLevel.VALIDATED else "recommended"
+        message = (
+            f"Human approval required for: {plan.description}\n"
+            f"Proposed commands: {plan.commands}\n"
+            f"Rollback: {plan.rollback_commands}"
+        )
+        if plan.dry_run_output:
+            message += f"\nDry-run trace written to {DRY_RUN_LOG}"
+
+        return {
+            "fingerprint": plan.issue_fingerprint,
+            "status": status,
+            "autonomy_level": level.value,
+            "confidence": plan.confidence,
+            "message": message,
+            "yaml_path": str(yaml_path) if yaml_path else None,
+            "dry_run": plan.dry_run_output or None,
+        }
+
+    # -- apply (human-approved execution path) ----------------------------
+
+    def apply(self, plan: RemediationPlan) -> dict[str, Any]:
+        """Execute the plan. **Only call after human approval.**
+
+        Snapshots protected configs, runs the commands sequentially, and rolls
+        back on the first failure. Updates the issue record's success/fail
+        counters so that confidence reflects real outcomes.
+        """
         snapshots = snapshot_configs(PROTECTED_PATHS)
         plan.config_snapshots = snapshots
+        result: dict[str, Any] = {
+            "fingerprint": plan.issue_fingerprint,
+            "status": "skipped",
+        }
 
         success = True
         for cmd in plan.commands:
@@ -313,7 +325,6 @@ class RemediationEngine:
                 success = False
                 result["failed_command"] = cmd
                 result["stderr"] = exc.stderr
-                # Rollback on failure
                 restored = restore_snapshots(snapshots)
                 for rb in plan.rollback_commands:
                     subprocess.run(rb, shell=True, capture_output=True, timeout=30)
@@ -326,7 +337,6 @@ class RemediationEngine:
             result["status"] = "applied"
             result["applied_commands"] = plan.commands
 
-        # Update track record
         record = self.state.get(plan.issue_fingerprint)
         if record:
             if success:
@@ -339,13 +349,12 @@ class RemediationEngine:
 
 
 # ---------------------------------------------------------------------------
-# CLI entry point  (for standalone testing)
+# CLI entry point (standalone testing)
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
     engine = RemediationEngine()
 
-    # Simulated: an issue is detected from a log line
     sample_log = "nginx[1234]: connect() to 10.0.0.5:8080 failed (111: Connection refused)"
     level, record, conf = engine.assess(sample_log, unit="nginx.service")
 
@@ -354,7 +363,6 @@ if __name__ == "__main__":
     print(f"Confidence  : {conf:.2%}")
     print(f"Autonomy    : {level.value.upper()}")
 
-    # Build a sample plan
     plan = RemediationPlan(
         issue_fingerprint=record.fingerprint,
         description="Restart nginx after upstream connection failure",
@@ -363,5 +371,5 @@ if __name__ == "__main__":
         confidence=conf,
     )
 
-    result = engine.execute(plan, level)
-    print(f"\nResult: {json.dumps(result, indent=2)}")
+    result = engine.recommend(plan, level)
+    print(f"\nRecommendation: {json.dumps(result, indent=2)}")

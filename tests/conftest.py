@@ -1,6 +1,6 @@
 """Shared fixtures for RootMedic tests."""
 
-import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -9,6 +9,26 @@ import pytest
 # Ensure repo root is on sys.path so imports work from tests/
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+
+_RUNTIME_FILES = [
+    "remediation_state.json",
+    "dry_run.log",
+    "remediation.yaml",
+    "known_issues.json",
+]
+_RUNTIME_DIRS = [".rollback_snapshots", "archive"]
+
+
+def _purge_runtime_state() -> None:
+    for fname in _RUNTIME_FILES:
+        p = Path(fname)
+        if p.exists():
+            p.unlink()
+    for dname in _RUNTIME_DIRS:
+        d = Path(dname)
+        if d.exists():
+            shutil.rmtree(d)
 
 
 @pytest.fixture
@@ -21,23 +41,9 @@ def temp_dir():
 @pytest.fixture(autouse=True)
 def clean_runtime_state():
     """Remove runtime state files before and after each test."""
-    for fname in ["remediation_state.json", "dry_run.log"]:
-        p = Path(fname)
-        if p.exists():
-            p.unlink()
-    snap_dir = Path(".rollback_snapshots")
-    if snap_dir.exists():
-        import shutil
-        shutil.rmtree(snap_dir)
+    _purge_runtime_state()
     yield
-    for fname in ["remediation_state.json", "dry_run.log"]:
-        p = Path(fname)
-        if p.exists():
-            p.unlink()
-    snap_dir = Path(".rollback_snapshots")
-    if snap_dir.exists():
-        import shutil
-        shutil.rmtree(snap_dir)
+    _purge_runtime_state()
 
 
 @pytest.fixture
