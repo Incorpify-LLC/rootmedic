@@ -46,7 +46,10 @@ pip install -r requirements.txt   # installs requests, pytest
 ### Run Tests
 
 ```bash
-# Run all tests
+# Run all tests (auto-discovers both tests/ and the root-level test_alerting.py)
+python -m pytest -v
+
+# Run only the tests/ directory (skips root-level test_alerting.py)
 python -m pytest tests/ -v
 
 # Run a specific test file
@@ -55,6 +58,8 @@ python -m pytest tests/test_remediation_engine.py -v
 # Run a specific test function
 python -m pytest tests/test_remediation_engine.py::test_dry_run_gate -v
 ```
+
+There is no `pytest.ini`/`pyproject.toml` config, so pytest auto-discovers from the current directory. `test_alerting.py` lives at the repo root, not under `tests/` — pointing pytest at `tests/` alone will silently skip it.
 
 ### Run the Application
 
@@ -90,7 +95,7 @@ ollama create rootmedic -f Modelfile
   3. **Full autonomous** — after pattern has been validated in production via canary deployments.
   Includes rollback logic, config snapshots, and state tracking (`remediation_state.json`).
 
-- **`alerting.py`** — Slack alerting with deduplication and escalation for human-intervention events. Uses SQLite-backed state (`alerts_state.db`) to suppress duplicate alerts within a configurable window and escalate unresolved issues. Configured via `alerts.yml` or environment variables (`SLACK_WEBHOOK_URL`).
+- **`alerting.py`** — Slack alerting with deduplication and escalation for human-intervention events. Uses SQLite-backed state (`alerts_state.db`) to suppress duplicate alerts within a configurable window and escalate unresolved issues. Configured via `alerts.yml` (keys: `slack_webhook_url`, `dedup_window_minutes`, `escalation_after_minutes`, `grafana_base_url`) or the `SLACK_WEBHOOK_URL` environment variable.
 
 - **`linked-data.py`** — Standalone linked list implementation backed by SQLite. Used for data-structure demonstrations and testing SQLite connectivity.
 
@@ -113,6 +118,8 @@ ollama create rootmedic -f Modelfile
 - **`deploy-rootmedic.yml`** — Deploys RootMedic agent to VM2.
 - **`inject-fault.yml`** — Injects a controlled fault for autonomous healing verification.
 - **`rootmedic-dashboard.json`** — Grafana dashboard exported for CI import.
+- **`run_demo.sh`** — Local end-to-end simulation of the CI pipeline (runs tests, injects 3 faults sequentially, prints autonomous-recovery evidence). Useful for reproducing pipeline behavior without provisioning VMs.
+- **`KNOWN_ISSUES.md`** — Documents an open libvirt URI mismatch (`qemu:///system` vs `qemu:///session`) that blocks VM provisioning in `provision-vms.yml`. Check here before debugging VM-provisioning failures.
 
 ### Tests
 
@@ -127,3 +134,12 @@ ollama create rootmedic -f Modelfile
 - **Naming**: `snake_case` for functions and variables; `PascalCase` for classes.
 - **Imports**: Standard library first, then third-party, separated by a blank line.
 - No formatter or linter is currently configured; `pytest` is the test runner.
+
+## Runtime Artifacts (gitignored)
+
+These files are written by the agent at runtime and should not be committed or treated as source:
+
+- `remediation_state.json` — tracks issue-pattern occurrence counts and autonomy-tier progression. Deleting it resets the engine to "recommend only" for every pattern.
+- `dry_run.log` — dry-run simulation output from the remediation engine.
+- `.rollback_snapshots/` — config snapshots captured before applying a fix; consumed by rollback logic.
+- `user_database.db`, `alerts_state.db` — SQLite stores; regenerable via `create_sample_data.py` and the alerting module respectively.
