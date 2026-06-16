@@ -24,7 +24,17 @@ from typing import Any, Optional
 
 DEFAULT_BASE_URL = "https://litellm.saneax.in"
 DEFAULT_MODEL = "smart"
-REQUEST_TIMEOUT = 30
+# Per-event LLM call timeout (seconds). Override with ROOTMEDIC_LLM_TIMEOUT — the
+# demo lowers it so a slow LLM host can't stall the run.
+REQUEST_TIMEOUT = int(os.environ.get("ROOTMEDIC_LLM_TIMEOUT", "30"))
+
+
+class LLMUnavailable(Exception):
+    """Raised on a transport-level LLM failure (timeout / connection refused).
+
+    Distinct from "the LLM ran but declined to act" (which returns None). The
+    agent uses this to stop hammering an unreachable LLM for the rest of a run.
+    """
 
 CONFIG_PATHS = [
     Path("/etc/rootmedic/config.yaml"),
@@ -129,6 +139,7 @@ def propose_plan(event: dict[str, Any], config: Optional[LLMConfig] = None):
             {"role": "user", "content": user_prompt},
         ],
         "temperature": 0.1,
+        "max_tokens": 512,
         "response_format": {"type": "json_object"},
     }
     headers = {
@@ -147,6 +158,9 @@ def propose_plan(event: dict[str, Any], config: Optional[LLMConfig] = None):
         body = resp.json()
         content = body["choices"][0]["message"]["content"]
         decision = json.loads(content)
+    except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+        # Transport failure — signal the caller to stop trying the LLM this run.
+        raise LLMUnavailable(str(exc)) from exc
     except Exception as exc:
         print(f"[llm_client] LiteLLM call failed: {exc}")
         return None

@@ -32,10 +32,17 @@ from archive import IncidentRecord, archive_incident
 # --- Optional integrations ---------------------------------------------------
 
 try:
-    from llm_client import load_config as _load_llm_config, propose_plan as _llm_propose_plan
+    from llm_client import (
+        load_config as _load_llm_config,
+        propose_plan as _llm_propose_plan,
+        LLMUnavailable,
+    )
 except ImportError:  # pragma: no cover
     _load_llm_config = lambda: None
     _llm_propose_plan = lambda event, config=None: None
+
+    class LLMUnavailable(Exception):
+        pass
 
 try:
     from alerting import AlertManager
@@ -102,6 +109,42 @@ def build_remediation_plan(event: dict, engine: RemediationEngine) -> Optional[R
                 "apt-get clean",
             ],
             rollback_commands=[],
+        )
+
+    if (
+        "read-only file system" in msg_lower
+        or "remounting read-only" in msg_lower
+        or "-fs error" in msg_lower            # EXT4-fs / XFS-fs error
+        or "i/o error" in msg_lower
+    ):
+        return RemediationPlan(
+            issue_fingerprint=fp,
+            description="Filesystem error — inspect kernel log and remount read-write",
+            commands=[
+                "journalctl -k -b | tail -n 50",
+                "mount -o remount,rw /",
+            ],
+            rollback_commands=["mount -o remount,ro /"],
+        )
+
+    if (
+        "main process exited" in msg_lower
+        or "code=killed" in msg_lower
+        or "result 'signal'" in msg_lower
+        or "result 'core-dump'" in msg_lower
+        or "segfault" in msg_lower
+        or "/segv" in msg_lower
+        or "entered failed state" in msg_lower
+    ):
+        svc = event["unit"]
+        return RemediationPlan(
+            issue_fingerprint=fp,
+            description=f"Service {svc} crashed — clear failed state and restart",
+            commands=[
+                f"systemctl reset-failed {svc}",
+                f"systemctl restart {svc}",
+            ],
+            rollback_commands=[f"systemctl stop {svc}"],
         )
 
     return None
@@ -194,8 +237,18 @@ def run_agent() -> None:
     events = [redact_event(ev) for ev in events]
 
     results: list[dict[str, Any]] = []
+    llm_enabled = llm_config is not None
     for event in events:
-        plan, source = _resolve_plan(event, engine, store, llm_config)
+        try:
+            plan, source = _resolve_plan(
+                event, engine, store, llm_config if llm_enabled else None
+            )
+        except LLMUnavailable as exc:
+            # A slow/unreachable LLM must not stall the whole run: stop trying it
+            # after the first transport failure and fall through on remaining events.
+            print(f"[agent] LLM unavailable ({exc}); skipping LLM for the rest of this run.")
+            llm_enabled = False
+            continue
         if plan is None:
             continue
 
@@ -253,5 +306,40 @@ def _resolve_plan(
     return None, "none"
 
 
+def run_loop(interval: int) -> None:
+    """Run the agent forever, every ``interval`` seconds.
+
+    Used by the systemd unit so the service stays active between scans instead
+    of exiting after a single pass (which made ``systemctl is-active`` report
+    the service as dead). A single fetch failure never breaks the loop.
+    """
+    print(f"[agent] starting in loop mode (every {interval}s). Ctrl-C to stop.")
+    while True:
+        try:
+            run_agent()
+        except KeyboardInterrupt:
+            print("[agent] stopping.")
+            return
+        except Exception as exc:  # never let one bad scan kill the daemon
+            print(f"[agent] scan failed: {exc}")
+        time.sleep(interval)
+
+
 if __name__ == "__main__":
-    run_agent()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="RootMedic log-analysis agent.")
+    parser.add_argument(
+        "--loop", action="store_true",
+        help="Run continuously (for the systemd service) instead of a single pass.",
+    )
+    parser.add_argument(
+        "--interval", type=int, default=60,
+        help="Seconds between scans in --loop mode (default: 60).",
+    )
+    args = parser.parse_args()
+
+    if args.loop:
+        run_loop(args.interval)
+    else:
+        run_agent()

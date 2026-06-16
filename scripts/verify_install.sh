@@ -92,16 +92,17 @@ _llm_up() {
   [[ "${code}" == "200" ]]
 }
 
-_push_fault() {  # _push_fault "title" "log line"
-  local title="$1" line="$2" ts
+_push_fault() {  # _push_fault "title" "systemd_unit" "log line"
+  local title="$1" unit="$2" line="$3" ts
   ts=$(date +%s%N)
-  # job=fluent-bit matches the agent's Loki query in ingest.py.
+  # job=fluent-bit matches the agent's Loki query; systemd_unit is the label
+  # ingest.parse_and_normalize reads into event["unit"].
   local payload
-  payload=$(python3 - "$line" "$ts" <<'PY'
+  payload=$(python3 - "$line" "$ts" "$unit" <<'PY'
 import json, sys
-line, ts = sys.argv[1], sys.argv[2]
+line, ts, unit = sys.argv[1], sys.argv[2], sys.argv[3]
 print(json.dumps({"streams":[{
-    "stream":{"job":"fluent-bit","host":"rootmedic-demo","unit":"demo.service"},
+    "stream":{"job":"fluent-bit","host":"rootmedic-demo","systemd_unit":unit},
     "values":[[ts, line]]
 }]}))
 PY
@@ -147,23 +148,30 @@ echo
 _pause
 
 info "Injecting synthetic faults into Loki…"
-_push_fault "OOM kill (mysqld)" \
+_push_fault "OOM kill (mysqld)" "mysqld.service" \
   "kernel: Out of memory: Killed process 4821 (mysqld) total-vm:9912340kB, anon-rss:8123400kB"
-_push_fault "EXT4 filesystem error (sda1)" \
+_push_fault "EXT4 filesystem error (sda1)" "systemd-journald.service" \
   "kernel: EXT4-fs error (device sda1): ext4_lookup:1602: inode #131073: comm nginx: deleted inode referenced — remounting read-only, write failed"
-_push_fault "nginx service crash" \
+_push_fault "nginx service crash" "nginx.service" \
   "systemd: nginx.service: Main process exited, code=killed, status=11/SEGV; unit entered failed state"
 echo
 info "Waiting for Loki to index the events…"
 sleep 4
 _pause
 
+# All three faults are matched by the rule-based planner, so the demo does not
+# depend on the LLM. Cap the LLM timeout anyway so any unrelated journal noise
+# that misses the rules can't stall this run on a slow LLM host.
+export ROOTMEDIC_LLM_TIMEOUT="${ROOTMEDIC_LLM_TIMEOUT:-10}"
+# Start from a clean slate so we display *this* run's plan.
+rm -f "${INSTALL_DIR}/remediation.yaml" 2>/dev/null || true
+
 info "Running the RootMedic agent (fetch → redact → diagnose → recommend)…"
 echo -e "${DIM}"
-if command -v rootmedic >/dev/null 2>&1; then
-  ( cd "${INSTALL_DIR}" 2>/dev/null && rootmedic ) || true
-elif [[ -x "${INSTALL_DIR}/.venv/bin/python" ]]; then
+if [[ -x "${INSTALL_DIR}/.venv/bin/python" ]]; then
   ( cd "${INSTALL_DIR}" && .venv/bin/python fetch_normalize_logs.py ) || true
+elif command -v rootmedic >/dev/null 2>&1; then
+  ( cd "${INSTALL_DIR}" 2>/dev/null && rootmedic ) || true
 else
   ( cd "${INSTALL_DIR}" && python3 fetch_normalize_logs.py ) || true
 fi
