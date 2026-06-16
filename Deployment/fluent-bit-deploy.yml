@@ -1,0 +1,103 @@
+---
+# Deploy Fluent Bit log collector on Linux hosts (Debian/Ubuntu, RHEL/CentOS, or generic).
+# Replaces Promtail and Alloy. Forwards systemd journal error/warning entries to a central Loki.
+#
+# Required vars (set in inventory or --extra-vars):
+#   loki_host   — hostname or IP of the central Loki server
+#   loki_port   — Loki HTTP port (default 3100)
+
+- name: Deploy Fluent Bit log collector
+  hosts: all
+  become: yes
+  vars:
+    fluent_bit_version: "3.3.0"
+    loki_host: "{{ loki_host | default('localhost') }}"
+    loki_port: "{{ loki_port | default(3100) }}"
+    fluent_bit_config_dir: /etc/fluent-bit
+    fluent_bit_service: fluent-bit
+
+  tasks:
+
+    - name: Install curl and gpg (Debian/Ubuntu)
+      apt:
+        name:
+          - curl
+          - gpg
+          - ca-certificates
+        state: present
+        update_cache: yes
+      when: ansible_facts['os_family'] == "Debian"
+
+    - name: Add Fluent Bit GPG key (Debian/Ubuntu)
+      shell: |
+        curl -fsSL https://packages.fluentbit.io/fluentbit.key \
+          | gpg --dearmor -o /usr/share/keyrings/fluentbit-keyring.gpg
+      args:
+        creates: /usr/share/keyrings/fluentbit-keyring.gpg
+      when: ansible_facts['os_family'] == "Debian"
+
+    - name: Add Fluent Bit apt repository (Debian/Ubuntu)
+      copy:
+        dest: /etc/apt/sources.list.d/fluentbit.list
+        content: |
+          deb [signed-by=/usr/share/keyrings/fluentbit-keyring.gpg] \
+            https://packages.fluentbit.io/debian/{{ ansible_distribution_release }} stable main
+        mode: "0644"
+      when: ansible_facts['os_family'] == "Debian"
+
+    - name: Install fluent-bit package (Debian/Ubuntu)
+      apt:
+        name: fluent-bit
+        state: present
+        update_cache: yes
+      when: ansible_facts['os_family'] == "Debian"
+
+    - name: Add Fluent Bit yum repository (RHEL/CentOS)
+      yum_repository:
+        name: fluent-bit
+        description: Fluent Bit
+        baseurl: "https://packages.fluentbit.io/centos/{{ ansible_distribution_major_version }}/\
+                  $basearch/"
+        gpgcheck: yes
+        gpgkey: https://packages.fluentbit.io/fluentbit.key
+        enabled: yes
+      when: ansible_facts['os_family'] == "RedHat"
+
+    - name: Install fluent-bit package (RHEL/CentOS)
+      yum:
+        name: fluent-bit
+        state: present
+      when: ansible_facts['os_family'] == "RedHat"
+
+    - name: Ensure Fluent Bit config directory exists
+      file:
+        path: "{{ fluent_bit_config_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Deploy Fluent Bit main config
+      template:
+        src: templates/fluent-bit.conf.j2
+        dest: "{{ fluent_bit_config_dir }}/fluent-bit.conf"
+        mode: "0644"
+      notify: restart fluent-bit
+
+    - name: Deploy parsers config
+      copy:
+        src: files/fluent-bit-parsers.conf
+        dest: "{{ fluent_bit_config_dir }}/parsers.conf"
+        mode: "0644"
+      notify: restart fluent-bit
+
+    - name: Enable and start Fluent Bit
+      systemd:
+        name: "{{ fluent_bit_service }}"
+        enabled: yes
+        state: started
+        daemon_reload: yes
+
+  handlers:
+    - name: restart fluent-bit
+      systemd:
+        name: "{{ fluent_bit_service }}"
+        state: restarted

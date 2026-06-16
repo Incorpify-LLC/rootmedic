@@ -11,15 +11,21 @@ services:
       - ./data/loki:/loki
       - ./loki-config.yaml:/etc/loki/loki-config.yaml:ro
 
-  promtail:
-    image: grafana/promtail:2.9.0
-    container_name: promtail
+  fluent-bit:
+    image: fluent/fluent-bit:3.3
+    container_name: fluent-bit
     volumes:
       - /var/log/journal:/var/log/journal:ro
       - /etc/machine-id:/etc/machine-id:ro
-      - ./promtail-config.yml:/etc/promtail/promtail-config.yml:ro
-    command: -config.file=/etc/promtail/promtail-config.yml
+      - ./fluent-bit.conf:/etc/fluent-bit/fluent-bit.conf:ro
+      - ./fluent-bit-parsers.conf:/etc/fluent-bit/parsers.conf:ro
+    environment:
+      - LOKI_HOST=loki
+      - LOKI_PORT=3100
+    command: /fluent-bit/bin/fluent-bit -c /etc/fluent-bit/fluent-bit.conf
     user: root
+    depends_on:
+      - loki
 
   grafana:
     image: grafana/grafana:10.2.3

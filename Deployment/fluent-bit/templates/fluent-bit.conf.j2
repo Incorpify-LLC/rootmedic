@@ -1,0 +1,27 @@
+[SERVICE]
+    Flush           5
+    Log_Level       info
+    Daemon          Off
+    Parsers_File    {{ fluent_bit_config_dir }}/parsers.conf
+    HTTP_Server     Off
+
+[INPUT]
+    Name              systemd
+    Tag               host.*
+    Read_From_Tail    On
+    Strip_Underscores On
+
+[FILTER]
+    Name    grep
+    Match   *
+    Regex   PRIORITY ^[34]$
+
+[OUTPUT]
+    Name            loki
+    Match           *
+    Host            {{ loki_host }}
+    Port            {{ loki_port }}
+    Labels          job=fluent-bit,host=${HOSTNAME}
+    Label_Keys      $SYSLOG_IDENTIFIER,$_SYSTEMD_UNIT
+    Line_Format     json
+    Auto_Kubernetes_Labels Off

@@ -9,7 +9,8 @@ RootMedic is an AI-driven log analysis and **recommend-only** remediation agent 
 **Architecture:**
 
 ```
-Linux Hosts ─▶ Alloy/Promtail ─▶ Loki ─▶ ingest.py ─▶ redactor.py
+Linux Hosts ─▶ Fluent Bit ─▶ Loki ─▶ ingest.py ─▶ redactor.py
+[Datadog/alerts] ──webhook──▶ webhook_receiver.py ─▶ redactor.py
                                                        │
                                                        ▼
                                           vector_store.py (cache)
@@ -24,18 +25,18 @@ Linux Hosts ─▶ Alloy/Promtail ─▶ Loki ─▶ ingest.py ─▶ redactor.p
                                           (plugins)   (tiered retention)
 ```
 
-Logs flow from Linux hosts through Alloy or Promtail into Loki. The agent (`fetch_normalize_logs.py`) queries Loki, normalises and **redacts** each event, then tries the fingerprint-keyed known-issue cache (`vector_store.py`). On a miss it falls back to the rule-based planner and finally to the LLM. The resulting `RemediationPlan` is run through `remediation_engine.recommend()` which attaches a dry-run trace once an issue is past the occurrence gate, writes `remediation.yaml`, fans an alert out through every configured plugin (Slack / generic webhook), and archives the incident with tiered retention. **No commands are ever executed automatically** — `remediation_engine.apply()` is a separate entrypoint intended to be called from a CLI or web UI after operator review.
+Logs flow from Linux hosts through **Fluent Bit** into Loki (Scenario 1 and 3), or arrive as webhook POSTs from Datadog or any alertmanager (Scenario 2 — cloud). The agent (`fetch_normalize_logs.py`) queries Loki; `webhook_receiver.py` handles the push path. Both paths then **redact** each event, try the fingerprint-keyed known-issue cache (`vector_store.py`), fall back to the rule-based planner and finally to the LLM. The resulting `RemediationPlan` is run through `remediation_engine.recommend()` which attaches a dry-run trace once an issue is past the occurrence gate, writes `remediation.yaml`, fans an alert out through every configured plugin (Slack / generic webhook), and archives the incident with tiered retention. **No commands are ever executed automatically** — `remediation_engine.apply()` is a separate entrypoint intended to be called from a CLI or web UI after operator review.
 
 ## Tech Stack
 
-- **Log aggregation**: Loki, Promtail, Grafana Alloy
+- **Log aggregation**: Loki + **Fluent Bit** (collector on each host; replaces Promtail and Alloy)
 - **Visualization**: Grafana (port 3000, login admin/admin)
-- **AI / LLM**: Ollama (local via `Modelfile`), OpenAI API
+- **AI / LLM**: LiteLLM proxy (`https://litellm.saneax.in`, model `smart`) in production; Ollama (local via `Modelfile`) for dev; configured via `/etc/rootmedic/config.yaml` after `install.sh`
 - **Agent runtime**: Python 3.13
 - **Alerting**: Slack incoming webhooks (with dedup/escalation in `alerting.py`)
 - **Data**: SQLite (`user_database.db`, `alerts_state.db`)
 - **CI/CD**: Jenkins (`Jenkinsfile`)
-- **Deployment**: Docker Compose, Ansible
+- **Deployment**: Docker Compose / Podman Compose, Ansible
 
 ## Build, Test, and Development Commands
 
@@ -72,8 +73,10 @@ There is no `pytest.ini`/`pyproject.toml` config, so pytest auto-discovers from 
 ### Run the Application
 
 ```bash
-# Start the logging stack (Loki + Promtail + Grafana)
+# Start the logging stack (Loki + Fluent Bit + Grafana) — Docker or Podman
 docker compose -f Deployment/docker-compose.yml up -d
+# or with Podman:
+podman-compose -f Deployment/docker-compose.yml up -d
 
 # Fetch and normalize logs from Loki
 python fetch_normalize_logs.py
@@ -84,6 +87,41 @@ python create_sample_data.py
 # Run linked-list demo against SQLite
 python linked-data.py
 ```
+
+### End-to-End Demo (`demo.py`)
+
+`demo.py` manages the Podman stack, injects synthetic log scenarios into Loki, runs the full agent pipeline, and verifies healing. It uses `podman-compose` (not `docker compose`).
+
+```bash
+# List available scenarios without running
+python demo.py --dry-run
+
+# Run all scenarios (starts/stops stack automatically)
+python demo.py
+
+# Run a single scenario
+python demo.py --scenario service_crash
+
+# Force auto-apply even for RECOMMEND-level issues (demo mode)
+python demo.py --force-apply
+
+# Assume stack is already running
+python demo.py --no-stack
+```
+
+Scenarios: `service_crash`, `oom_kill`, `disk_full`, `connection_refused`. Set `DEMO_FORCE_APPLY=1` as an environment variable to trigger apply without the `--force-apply` flag.
+
+### Production Install (`install.sh`)
+
+Installs RootMedic as a systemd service on any Linux host:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Incorpify-LLC/rootmedic/main/install.sh | sudo bash
+# or with API key pre-set:
+LITELLM_API_KEY=sk-... curl ... | sudo -E bash
+```
+
+Installs to `/opt/rootmedic`, writes config to `/etc/rootmedic/config.yaml` (mode 600), registers a `rootmedic.service` systemd unit, and installs a `/usr/local/bin/rootmedic` CLI shim. Key env overrides: `LITELLM_BASE_URL`, `LITELLM_MODEL`, `INSTALL_DIR`.
 
 ### Ollama Model (optional, for local LLM)
 
@@ -120,18 +158,26 @@ ollama create rootmedic -f Modelfile
 
 ### Demo / data modules
 
+- **`demo.py`** — End-to-end autonomous healing demo. Manages the Podman stack via `podman-compose`, injects synthetic error logs into Loki, drives the full agent pipeline (ingest → redact → resolve → recommend/apply), and verifies that expected remediation commands were run. Uses `DEMO_FORCE_APPLY=1` or `--force-apply` to bypass the VALIDATED gate for demo purposes.
+
 - **`linked-data.py`** — Standalone linked list implementation backed by SQLite. Used for data-structure demonstrations and testing SQLite connectivity.
 
 - **`create_sample_data.py`** — Populates `user_database.db` with synthetic test rows for demos.
 
+### Web (`web/`)
+
+- **`web/index.html`**, **`web/style.css`** — Static marketing landing page for RootMedic. Not part of the agent runtime; served separately.
+
 ### Deployment Assets (`Deployment/`)
 
-- **`docker-compose.yml`** — Local dev stack: Loki (3100), Promtail, Grafana (3000).
+- **`docker-compose.yml`** — Local dev stack: Loki (3100), Fluent Bit, Grafana (3000).
 - **`loki-config.yaml`** — Loki server configuration (7-day retention).
-- **`promtail-config.yml`** — Promtail scraper targeting systemd-journal, filtering priority 3 (error) and 4 (warning).
-- **`alloy-deploy.yml`** — Ansible playbook for Grafana Alloy collector (metrics + logs).
-- **`inventory.ini`** — Host inventory for Alloy playbook.
-- **`promtail/`** — Ansible playbook, templates, and inventory for pushing Promtail onto remote Debian/Ubuntu hosts.
+- **`fluent-bit.conf`** — Fluent Bit collector config: systemd input → priority 3/4 filter → Loki output. Uses `LOKI_HOST` / `LOKI_PORT` env vars.
+- **`fluent-bit-parsers.conf`** — Standard syslog and JSON parsers for Fluent Bit.
+- **`fluent-bit-deploy.yml`** — Ansible playbook to install and configure Fluent Bit on Debian/Ubuntu and RHEL/CentOS hosts. Requires `loki_host` and `loki_port` vars.
+- **`fluent-bit/`** — Ansible role structure: `templates/fluent-bit.conf.j2` (Jinja2 config template), `files/fluent-bit-parsers.conf`.
+- **`inventory.ini`** / **`inventory.yaml`** — Host inventory files for Ansible playbooks.
+- **`alloy-deploy.yml`**, **`promtail/`** — Legacy Alloy and Promtail deployment assets; superseded by Fluent Bit but retained for reference.
 
 ### CI/CD (`ci/`)
 
@@ -151,6 +197,7 @@ ollama create rootmedic -f Modelfile
 - **`tests/test_redactor.py`** — Secret/PII patterns and event sanitization.
 - **`tests/test_vector_store.py`** — Known-issue cache lookup, persistence, retention.
 - **`tests/test_archive.py`** — Incident YAML output and tier-based pruning.
+- **`tests/test_demo_scenarios.py`** — Unit tests for `demo.py` with mocked Loki/agent dependencies. Covers `SCENARIOS` dict structure, `verify_healing`, `push_log_to_loki`, `run_scenario`, `run_all_scenarios`, and CLI argument parsing.
 - **`test_alerting.py`** (repo root) — `AlertManager`, plugin registry, Slack/Webhook plugins, dedup and escalation.
 - **`tests/conftest.py`** — Shared pytest fixtures and runtime-state cleanup (also clears `known_issues.json`, `archive/`, `remediation.yaml`).
 
