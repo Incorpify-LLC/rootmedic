@@ -11,7 +11,7 @@ import datetime
 from typing import Any
 
 LOKI_URL = "http://localhost:3100/loki/api/v1/query_range"
-QUERY = '{job="systemd-journal"} |= "error" or |= "warning"'
+QUERY = '{job=~"systemd-journal|fluent-bit"} |~ "(?i)error|warning|kill|fail|denied"'
 LIMIT = 100
 
 

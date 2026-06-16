@@ -1,0 +1,15 @@
+apiVersion: 1
+
+datasources:
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    # Inside the compose network Loki is reachable by service name.
+    # For a standalone Grafana pointing at a LAN Loki, change this to
+    # the actual host IP / hostname.
+    url: http://loki:3100
+    isDefault: true
+    editable: false
+    jsonData:
+      maxLines: 1000

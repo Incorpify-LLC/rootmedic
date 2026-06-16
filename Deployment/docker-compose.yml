@@ -4,12 +4,13 @@ services:
   loki:
     image: docker.io/grafana/loki:2.9.0
     container_name: loki
+    user: root
     ports:
       - "3100:3100"
     command: -config.file=/etc/loki/loki-config.yaml
     volumes:
-      - ./data/loki:/loki
-      - ./loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - ./data/loki:/loki:Z
+      - ./loki-config.yaml:/etc/loki/loki-config.yaml:ro,z
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3100/ready || exit 1"]
       interval: 10s
@@ -20,25 +21,27 @@ services:
   fluent-bit:
     image: docker.io/fluent/fluent-bit:latest
     container_name: fluent-bit
+    user: root
     volumes:
-      - /var/log/journal:/var/log/journal:ro
-      - /etc/machine-id:/etc/machine-id:ro
-      - ./fluent-bit.conf:/etc/fluent-bit/fluent-bit.conf:ro
-      - ./fluent-bit-parsers.conf:/etc/fluent-bit/parsers.conf:ro
+      - /var/log/journal:/var/log/journal:ro,z
+      - /etc/machine-id:/etc/machine-id:ro,z
+      - ./fluent-bit.conf:/etc/fluent-bit/fluent-bit.conf:ro,z
+      - ./fluent-bit-parsers.conf:/etc/fluent-bit/parsers.conf:ro,z
     environment:
       - LOKI_HOST=loki
       - LOKI_PORT=3100
     command: /fluent-bit/bin/fluent-bit -c /etc/fluent-bit/fluent-bit.conf
-    user: root
     restart: unless-stopped
 
   grafana:
     image: docker.io/grafana/grafana:10.2.3
     container_name: grafana
+    user: root
     ports:
       - "3000:3000"
     volumes:
-      - ./data/grafana:/var/lib/grafana
+      - ./data/grafana:/var/lib/grafana:Z
+      - ./grafana-provisioning:/etc/grafana/provisioning:ro,z
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
