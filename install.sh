@@ -286,7 +286,7 @@ services:
     restart: unless-stopped
 
   fluent-bit:
-    image: docker.io/fluent/fluent-bit:3.3
+    image: docker.io/fluent/fluent-bit:latest
     container_name: fluent-bit
     volumes:
       - /var/log/journal:/var/log/journal:ro
@@ -313,7 +313,7 @@ COMPOSE_EOF
   # Pull images explicitly before compose so the runtime never needs to
   # resolve short names interactively (Fedora enforces this strictly).
   log "Pulling container images (this may take a few minutes on first run)..."
-  local images=("docker.io/grafana/loki:2.9.0" "docker.io/fluent/fluent-bit:3.3" "docker.io/grafana/grafana:10.2.3")
+  local images=("docker.io/grafana/loki:2.9.0" "docker.io/fluent/fluent-bit:latest" "docker.io/grafana/grafana:10.2.3")
   for img in "${images[@]}"; do
     log "  Pulling ${img} ..."
     if ! ${container_runtime} pull "${img}"; then

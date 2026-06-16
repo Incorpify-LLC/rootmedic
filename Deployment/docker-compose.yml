@@ -18,7 +18,7 @@ services:
       start_period: 10s
 
   fluent-bit:
-    image: docker.io/fluent/fluent-bit:3.3
+    image: docker.io/fluent/fluent-bit:latest
     container_name: fluent-bit
     volumes:
       - /var/log/journal:/var/log/journal:ro
