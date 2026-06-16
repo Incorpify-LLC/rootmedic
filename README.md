@@ -1,6 +1,6 @@
 # RootMedic
 
-AI-driven log analysis and **recommend-only** remediation agent for Linux systems. Centralizes system logs, uses an LLM (with a fingerprint-keyed cache in front of it) to diagnose root causes, and emits declarative `remediation.yaml` artifacts plus alerts. Execution always requires explicit human approval — see [`log-analyzer-plan-A.md`](log-analyzer-plan-A.md).
+AI-driven log analysis and **recommend-only** remediation agent for Linux systems. Centralizes system logs, uses an LLM (with a fingerprint-keyed cache in front of it) to diagnose root causes, and emits declarative `remediation.yaml` artifacts plus alerts. Execution always requires explicit human approval — see [`docs/product/log-analyzer-plan-A.md`](docs/product/log-analyzer-plan-A.md).
 
 ## Quickstart
 
@@ -96,28 +96,36 @@ ansible-playbook -i Deployment/inventory.ini Deployment/alloy-deploy.yml
 
 ```
 .
-├── fetch_normalize_logs.py   # Agent orchestrator (wires pipeline stages)
+├── fetch_normalize_logs.py   # Agent orchestrator + entrypoint (wires pipeline stages)
 ├── ingest.py                 # Loki query + log normalization
 ├── fingerprint.py            # Stable issue fingerprinting
 ├── redactor.py               # PII / secret scrubber (regex)
 ├── vector_store.py           # Fingerprint-keyed known-issue cache
-├── llm_client.py             # LiteLLM fallback
+├── llm_client.py             # LiteLLM / Ollama fallback
 ├── remediation_engine.py     # Recommend-only engine (RECOMMEND/VALIDATED), apply() for human-approved exec
-├── alert_plugins.py          # AlertPlugin base + SlackPlugin + WebhookPlugin
+├── alert_plugins.py          # AlertPlugin base + SlackPlugin + WebhookPlugin (alerting deferred — not yet wired into install)
 ├── alerting.py               # AlertManager (SQLite dedup, fan-out)
 ├── archive.py                # Per-incident YAML + tiered retention
-├── linked-data.py            # Linked list demo with SQLite backend
+├── demo.py                   # End-to-end healing demo (Podman + synthetic faults)
 ├── create_sample_data.py     # Generates sample data in user_database.db
+├── linked-data.py            # Linked list demo with SQLite backend
 ├── Modelfile                 # Ollama model definition for local inference
-├── Deployment/
-│   ├── docker-compose.yml    # Loki + Promtail + Grafana (local dev)
-│   ├── alloy-deploy.yml      # Ansible playbook for Alloy collector
-│   ├── inventory.ini         # Host inventory for Alloy playbook
-│   ├── loki-config.yaml      # Loki server config (7-day retention)
-│   ├── promtail-config.yml   # Promtail scraper config
-│   ├── files/                # Alloy YAML config
-│   └── promtail/             # Ansible playbook, templates, inventory
-└── log-analyzer-plan-A.md    # Design document and project rationale
+├── install.sh                # Production install (systemd service + Loki stack) — at root for a clean curl URL
+├── scripts/                  # Operator & developer shell scripts
+│   ├── verify_install.sh     #   Post-install health check + live healing demo
+│   ├── cleanup.sh            #   Destructive uninstaller
+│   └── dev-deploy.sh         #   Push install.sh + helpers to a test VM (developer utility)
+├── Deployment/               # Local dev logging stack
+│   ├── docker-compose.yml    #   Loki + Fluent Bit + Grafana
+│   ├── loki-config.yaml      #   Loki server config (7-day retention)
+│   ├── fluent-bit.conf       #   Fluent Bit collector config
+│   ├── grafana-provisioning/ #   Auto-provisioned datasource + dashboard
+│   └── fluent-bit/           #   Ansible role (templates, files)
+├── docs/                     # Installation, providers, troubleshooting
+│   └── product/              #   produc.md, log-analyzer-plan-A.md (design + rationale)
+├── ci/                       # Jenkins pipeline + Ansible CI playbooks
+├── tests/                    # pytest suite
+└── web/                      # Static marketing landing page
 ```
 
 ## Contributing

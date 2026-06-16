@@ -20,7 +20,6 @@
 #   LITELLM_BASE_URL           LLM API base URL
 #   LITELLM_MODEL              Model name
 #   LITELLM_API_KEY            API key (empty string OK for unauthenticated Ollama)
-#   SLACK_WEBHOOK_URL          Optional Slack incoming webhook
 #   ROOTMEDIC_REPO             Default: https://github.com/Incorpify-LLC/rootmedic.git
 #   ROOTMEDIC_BRANCH           Default: main
 #   INSTALL_DIR                Default: /opt/rootmedic
@@ -33,7 +32,6 @@ LLM_TYPE="${LLM_TYPE:-}"
 LITELLM_BASE_URL="${LITELLM_BASE_URL:-}"
 LITELLM_MODEL="${LITELLM_MODEL:-}"
 LITELLM_API_KEY="${LITELLM_API_KEY:-}"
-SLACK_WEBHOOK_URL="${SLACK_WEBHOOK_URL:-}"
 ROOTMEDIC_REPO="${ROOTMEDIC_REPO:-https://github.com/Incorpify-LLC/rootmedic.git}"
 ROOTMEDIC_BRANCH="${ROOTMEDIC_BRANCH:-main}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/rootmedic}"
@@ -868,16 +866,10 @@ configure_llm() {
 }
 
 configure_alerts() {
-  echo
-  echo -e "${BOLD}── Alerting (Optional) ─────────────────────────────────────────${RESET}"
-  if [[ -z "${SLACK_WEBHOOK_URL}" ]]; then
-    if confirm "Configure a Slack webhook for alerts?" "n"; then
-      ask "Slack incoming webhook URL" ""
-      SLACK_WEBHOOK_URL="${REPLY}"
-    fi
-  else
-    log "Slack webhook configured via environment variable."
-  fi
+  # Alerting (Slack / webhook fan-out) is deferred to a later release. The
+  # alerting.py / alert_plugins.py modules ship with the agent but are not wired
+  # into the installer yet, so there is nothing to prompt for here.
+  :
 }
 
 # ─── Write artefacts ──────────────────────────────────────────────────────────
@@ -895,10 +887,13 @@ litellm_api_key:  "${LITELLM_API_KEY}"
 
 loki_url: "${LOKI_URL}/loki/api/v1/query_range"
 
-slack_webhook_url:          "${SLACK_WEBHOOK_URL}"
-dedup_window_minutes:       15
-escalation_after_minutes:   30
-grafana_base_url:           "http://localhost:3000"
+grafana_base_url: "http://localhost:3000"
+
+# Alerting (Slack / webhook fan-out) is deferred — to be wired in a later release.
+# alerting.py reads these keys when present; left blank for now.
+#   slack_webhook_url: ""
+#   dedup_window_minutes: 15
+#   escalation_after_minutes: 30
 
 # Webhook receiver (cloud/Datadog complement mode — not started by default)
 webhook_receiver_port: 9876
@@ -992,8 +987,8 @@ finish() {
   echo -e "  ${BOLD}Config${RESET}             →  ${CONFIG_FILE}"
   echo
   echo -e "  ${BOLD}Run the live healing demo:${RESET}"
-  # verify_install.sh is in the cloned repo; also copied by dev-deploy.sh
-  local verify="${INSTALL_DIR}/verify_install.sh"
+  # verify_install.sh lives under scripts/ in the cloned repo.
+  local verify="${INSTALL_DIR}/scripts/verify_install.sh"
   [[ ! -f "${verify}" ]] && verify="$(cd "$(dirname "${BASH_SOURCE[0]:-/dev/null}")" 2>/dev/null && pwd)/verify_install.sh"
   echo -e "  ${CYAN}  sudo bash ${verify}${RESET}"
   echo

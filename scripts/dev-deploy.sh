@@ -24,7 +24,8 @@ TARGET="${TARGET:-sanjayu@192.168.2.177}"
 LLM_URL="${LLM_URL:-http://192.168.2.112:11434}"
 MODEL="${MODEL:-llama3.2}"
 REMOTE_DIR="/home/sanjayu"
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # repo's scripts/
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"                  # repo root (install.sh lives here)
 SSH_OPTS="-o ServerAliveInterval=15 -o ServerAliveCountMax=20 -o ConnectTimeout=10"
 
 REMOTE_INSTALL=0
@@ -65,8 +66,8 @@ ok "Key auth OK."
 step "Uploading scripts to ${TARGET}:${REMOTE_DIR}/ ..."
 scp ${SSH_OPTS} \
   "${REPO_ROOT}/install.sh" \
-  "${REPO_ROOT}/cleanup.sh" \
-  "${REPO_ROOT}/verify_install.sh" \
+  "${SCRIPT_DIR}/cleanup.sh" \
+  "${SCRIPT_DIR}/verify_install.sh" \
   "${TARGET}:${REMOTE_DIR}/"
 ok "Scripts ready on VM."
 
@@ -93,7 +94,7 @@ if [[ "${REMOTE_INSTALL}" == "1" ]]; then
     START_LOKI_IF_DOWN=1 \
     bash ${REMOTE_DIR}/install.sh"
   ssh ${SSH_OPTS} "${TARGET}" \
-    "sudo cp ${REMOTE_DIR}/verify_install.sh /opt/rootmedic/ 2>/dev/null || true"
+    "sudo install -m 0755 ${REMOTE_DIR}/verify_install.sh /opt/rootmedic/scripts/verify_install.sh 2>/dev/null || true"
   echo
   ok "Done.  Run the demo:"
   cmd "bash dev-deploy.sh --verify"

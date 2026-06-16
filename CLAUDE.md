@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-RootMedic is an AI-driven log analysis and **recommend-only** remediation agent for Linux systems. It centralizes system logs, uses an LLM (with a vector-store cache in front of it) to diagnose root causes, and emits declarative `remediation.yaml` artifacts plus alerts. Execution of those remediations always requires explicit human approval — see `log-analyzer-plan-A.md`.
+RootMedic is an AI-driven log analysis and **recommend-only** remediation agent for Linux systems. It centralizes system logs, uses an LLM (with a vector-store cache in front of it) to diagnose root causes, and emits declarative `remediation.yaml` artifacts plus alerts. Execution of those remediations always requires explicit human approval — see `docs/product/log-analyzer-plan-A.md`.
 
 **Architecture:**
 
@@ -33,7 +33,7 @@ Logs flow from Linux hosts through **Fluent Bit** into Loki (Scenario 1 and 3), 
 - **Visualization**: Grafana (port 3000, login admin/admin)
 - **AI / LLM**: LiteLLM proxy (`https://litellm.saneax.in`, model `smart`) in production; Ollama (local via `Modelfile`) for dev; configured via `/etc/rootmedic/config.yaml` after `install.sh`
 - **Agent runtime**: Python 3.13
-- **Alerting**: Slack incoming webhooks (with dedup/escalation in `alerting.py`)
+- **Alerting**: Slack/webhook fan-out in `alerting.py` / `alert_plugins.py` (dedup/escalation) — **deferred: not yet wired into `install.sh`; to be built out later**
 - **Data**: SQLite (`user_database.db`, `alerts_state.db`)
 - **CI/CD**: Jenkins (`Jenkinsfile`)
 - **Deployment**: Docker Compose / Podman Compose, Ansible
@@ -111,6 +111,13 @@ python demo.py --no-stack
 
 Scenarios: `service_crash`, `oom_kill`, `disk_full`, `connection_refused`. Set `DEMO_FORCE_APPLY=1` as an environment variable to trigger apply without the `--force-apply` flag.
 
+### Operator & developer scripts
+
+- **`install.sh`** (repo **root** — kept there so the public `curl … | sudo bash` URL stays clean) — production install (below).
+- **`scripts/verify_install.sh`** — post-install health check + live healing demo: checks every component, injects 3 synthetic faults into Loki, runs the agent, and prints the resulting `remediation.yaml`. Honors `NONINTERACTIVE=1`.
+- **`scripts/cleanup.sh`** — destructive uninstaller (service, config, containers, Fluent Bit). Requires an explicit confirmation token.
+- **`scripts/dev-deploy.sh`** — developer utility that SCPs `install.sh` + the `scripts/` helpers to a test VM. SCP-only by default; `--remote-install` / `--verify` are opt-in.
+
 ### Production Install (`install.sh`)
 
 Installs RootMedic as a systemd service on any Linux host:
@@ -121,7 +128,7 @@ curl -fsSL https://raw.githubusercontent.com/Incorpify-LLC/rootmedic/main/instal
 LITELLM_API_KEY=sk-... curl ... | sudo -E bash
 ```
 
-Installs to `/opt/rootmedic`, writes config to `/etc/rootmedic/config.yaml` (mode 600), registers a `rootmedic.service` systemd unit, and installs a `/usr/local/bin/rootmedic` CLI shim. Key env overrides: `LITELLM_BASE_URL`, `LITELLM_MODEL`, `INSTALL_DIR`.
+Installs to `/opt/rootmedic`, writes config to `/etc/rootmedic/config.yaml` (mode 600), registers a `rootmedic.service` systemd unit, and installs a `/usr/local/bin/rootmedic` CLI shim. Key env overrides: `LITELLM_BASE_URL`, `LITELLM_MODEL`, `INSTALL_DIR`. Verify afterward with `sudo bash /opt/rootmedic/scripts/verify_install.sh`. **Alerting (Slack/webhook) is deferred** — the installer no longer prompts for it.
 
 ### Ollama Model (optional, for local LLM)
 
