@@ -39,6 +39,7 @@ ROOTMEDIC_BRANCH="${ROOTMEDIC_BRANCH:-main}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/rootmedic}"
 ROOTMEDIC_NON_INTERACTIVE="${ROOTMEDIC_NON_INTERACTIVE:-0}"
 START_LOKI_IF_DOWN="${START_LOKI_IF_DOWN:-0}"
+FLUENT_BIT_VIA_COMPOSE=0   # set to 1 when compose stack starts Fluent Bit for us
 
 CONFIG_DIR="/etc/rootmedic"
 CONFIG_FILE="${CONFIG_DIR}/config.yaml"
@@ -251,21 +252,100 @@ _start_loki_stack() {
     return 1
   fi
 
-  local compose_file="${INSTALL_DIR}/Deployment/docker-compose.yml"
-  log "Starting Loki stack with: ${compose_cmd} ..."
-  ${compose_cmd} -f "${compose_file}" up -d loki fluent-bit grafana
+  local container_runtime="podman"
+  command -v podman >/dev/null || container_runtime="docker"
 
-  log "Waiting for Loki to become ready (up to 60 s)..."
+  # Write a self-contained compose file with fully-qualified image names and no
+  # depends_on — avoids Fedora/Podman short-name resolution errors and the
+  # podman-compose 1.5.x health-check hang bug on unmonitored containers.
+  local compose_file="/tmp/rootmedic-loki-stack.yml"
+  local loki_data_dir="${INSTALL_DIR}/Deployment/data/loki"
+  local grafana_data_dir="${INSTALL_DIR}/Deployment/data/grafana"
+  local loki_cfg="${INSTALL_DIR}/Deployment/loki-config.yaml"
+  local fb_cfg="/etc/fluent-bit/fluent-bit.conf"
+  local fb_parsers="/etc/fluent-bit/parsers.conf"
+  mkdir -p "${loki_data_dir}" "${grafana_data_dir}"
+
+  # Write Fluent Bit config now (before compose) so the container can mount it.
+  # Inside the compose network Loki is reachable as "loki" (the service name),
+  # not "localhost" — pass the override so the mounted config is correct.
+  _write_fluent_bit_config "loki"
+
+  cat > "${compose_file}" <<COMPOSE_EOF
+version: '3.8'
+services:
+  loki:
+    image: docker.io/grafana/loki:2.9.0
+    container_name: loki
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/loki-config.yaml
+    volumes:
+      - ${loki_data_dir}:/loki
+      - ${loki_cfg}:/etc/loki/loki-config.yaml:ro
+    restart: unless-stopped
+
+  fluent-bit:
+    image: docker.io/fluent/fluent-bit:3.3
+    container_name: fluent-bit
+    volumes:
+      - /var/log/journal:/var/log/journal:ro
+      - /etc/machine-id:/etc/machine-id:ro
+      - ${fb_cfg}:/etc/fluent-bit/fluent-bit.conf:ro
+      - ${fb_parsers}:/etc/fluent-bit/parsers.conf:ro
+    command: /fluent-bit/bin/fluent-bit -c /etc/fluent-bit/fluent-bit.conf
+    user: root
+    restart: unless-stopped
+
+  grafana:
+    image: docker.io/grafana/grafana:10.2.3
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    volumes:
+      - ${grafana_data_dir}:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    restart: unless-stopped
+COMPOSE_EOF
+
+  # Pull images explicitly before compose so the runtime never needs to
+  # resolve short names interactively (Fedora enforces this strictly).
+  log "Pulling container images (this may take a few minutes on first run)..."
+  local images=("docker.io/grafana/loki:2.9.0" "docker.io/fluent/fluent-bit:3.3" "docker.io/grafana/grafana:10.2.3")
+  for img in "${images[@]}"; do
+    log "  Pulling ${img} ..."
+    if ! ${container_runtime} pull "${img}"; then
+      warn "Failed to pull ${img} — check network connectivity."
+      return 1
+    fi
+  done
+  ok "Images ready."
+
+  log "Starting Loki stack with: ${compose_cmd} ..."
+  ${compose_cmd} -f "${compose_file}" up -d
+
+  log "Waiting for Loki to become ready (up to 90 s)..."
   local i=0
-  while (( i < 30 )); do
+  while (( i < 45 )); do
     sleep 2; (( i++ ))
     if _loki_ready "${LOKI_URL}"; then
       ok "Loki is up at ${LOKI_URL}"
+      FLUENT_BIT_VIA_COMPOSE=1
       return 0
     fi
-    echo -n "."
+    printf "."
   done
   echo
+  # One last check with a longer timeout
+  if _loki_ready "${LOKI_URL}"; then
+    ok "Loki is up at ${LOKI_URL}"
+    FLUENT_BIT_VIA_COMPOSE=1
+    return 0
+  fi
+  warn "Loki container logs:"
+  podman logs loki 2>/dev/null | tail -10 || true
   return 1
 }
 
@@ -311,67 +391,99 @@ configure_loki() {
 
 # ─── Fluent Bit ───────────────────────────────────────────────────────────────
 install_fluent_bit() {
-  log "Installing Fluent Bit log collector..."
+  # When the compose stack is managing Fluent Bit, skip the native install.
+  # _start_loki_stack already wrote the config with "loki" as the host — do NOT
+  # overwrite it here with "localhost" or the container will try to reach itself.
+  if [[ "${FLUENT_BIT_VIA_COMPOSE}" == "1" ]]; then
+    ok "Fluent Bit is running in the container stack — skipping native install."
+    return
+  fi
 
-  local installed=0
+  log "Installing Fluent Bit log collector..."
 
   if command -v fluent-bit >/dev/null 2>&1; then
     ok "Fluent Bit already installed: $(fluent-bit --version 2>/dev/null | head -1)"
-    installed=1
+    _write_fluent_bit_config
+    _enable_fluent_bit
+    return
   fi
 
-  if [[ "${installed}" == "0" ]]; then
-    if command -v apt-get >/dev/null; then
-      # Official Fluent Bit apt repo
-      curl -fsSL https://packages.fluentbit.io/fluentbit.key \
-        | gpg --dearmor -o /usr/share/keyrings/fluentbit-keyring.gpg 2>/dev/null
-      local codename
-      codename=$(. /etc/os-release && echo "${VERSION_CODENAME:-${UBUNTU_CODENAME:-}}")
-      if [[ -z "${codename}" ]]; then
-        warn "Could not detect Ubuntu/Debian codename; defaulting to 'jammy'."
-        codename="jammy"
-      fi
-      cat > /etc/apt/sources.list.d/fluentbit.list <<EOF
+  local installed=0
+  if command -v apt-get >/dev/null; then
+    curl -fsSL https://packages.fluentbit.io/fluentbit.key \
+      | gpg --dearmor -o /usr/share/keyrings/fluentbit-keyring.gpg 2>/dev/null
+    local codename
+    codename=$(. /etc/os-release && echo "${VERSION_CODENAME:-${UBUNTU_CODENAME:-}}")
+    [[ -z "${codename}" ]] && codename="jammy"
+    cat > /etc/apt/sources.list.d/fluentbit.list <<EOF
 deb [signed-by=/usr/share/keyrings/fluentbit-keyring.gpg] https://packages.fluentbit.io/debian/${codename} stable main
 EOF
-      DEBIAN_FRONTEND=noninteractive apt-get update -qq
-      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq fluent-bit
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq fluent-bit && installed=1
 
-    elif command -v dnf >/dev/null; then
-      local major_ver
-      major_ver=$(. /etc/os-release && echo "${VERSION_ID%%.*}")
-      cat > /etc/yum.repos.d/fluentbit.repo <<EOF
+  elif command -v dnf >/dev/null; then
+    # Fedora does not have official Fluent Bit RPMs — use the RHEL 9 repo as best-effort.
+    # On genuine RHEL/CentOS, use the exact major version.
+    local distro_id major_ver repo_ver
+    distro_id=$(. /etc/os-release && echo "${ID:-unknown}")
+    major_ver=$(. /etc/os-release && echo "${VERSION_ID%%.*}")
+
+    if [[ "${distro_id}" == "fedora" ]]; then
+      warn "Fedora detected. Fluent Bit does not publish native Fedora RPMs."
+      warn "Attempting RHEL 9 compatible packages (may work on Fedora 38+)."
+      repo_ver=9
+    else
+      repo_ver="${major_ver}"
+    fi
+
+    cat > /etc/yum.repos.d/fluentbit.repo <<EOF
 [fluent-bit]
 name=Fluent Bit
-baseurl=https://packages.fluentbit.io/centos/${major_ver}/\$basearch/
+baseurl=https://packages.fluentbit.io/centos/${repo_ver}/\$basearch/
 gpgcheck=1
 gpgkey=https://packages.fluentbit.io/fluentbit.key
 enabled=1
 EOF
-      dnf install -y -q fluent-bit
-
-    elif command -v apk >/dev/null; then
-      apk add --no-cache fluent-bit
-
+    if dnf install -y -q fluent-bit 2>/dev/null; then
+      installed=1
     else
-      warn "Automatic Fluent Bit install is not supported on this distro."
+      warn "Native Fluent Bit install failed on ${distro_id} ${major_ver}."
+      warn "This is expected on Fedora — log collection will rely on the container stack."
       doc_hint "troubleshooting/fluent-bit.md"
-      warn "Install Fluent Bit manually and re-run, or continue without it."
-      if ! confirm "Continue without Fluent Bit?" "n"; then
-        die "Aborted. Install Fluent Bit first."
+      if ! confirm "Continue without native Fluent Bit?" "y"; then
+        die "Aborted. See docs for manual Fluent Bit install."
       fi
       return
     fi
-    ok "Fluent Bit installed."
+
+  elif command -v apk >/dev/null; then
+    apk add --no-cache fluent-bit && installed=1
+
+  else
+    warn "Automatic Fluent Bit install is not supported on this distro."
+    doc_hint "troubleshooting/fluent-bit.md"
+    if ! confirm "Continue without Fluent Bit?" "n"; then
+      die "Aborted. Install Fluent Bit first."
+    fi
+    return
   fi
 
-  # Write config
+  [[ "${installed}" == "1" ]] && ok "Fluent Bit installed."
+  _write_fluent_bit_config
+  _enable_fluent_bit
+}
+
+_write_fluent_bit_config() {
+  # Optional first arg overrides the Loki host (used when Fluent Bit runs inside
+  # a compose network where Loki is reachable by service name, not "localhost").
+  local host_override="${1:-}"
   log "Writing Fluent Bit configuration..."
-  local loki_host loki_port loki_path
-  # Parse host and port from LOKI_URL (e.g. http://loki:3100 or http://192.168.1.10:3100)
+  local loki_host loki_port
   loki_host=$(echo "${LOKI_URL}" | sed -E 's|https?://([^:/]+).*|\1|')
   loki_port=$(echo "${LOKI_URL}" | sed -E 's|https?://[^:]+:([0-9]+).*|\1|')
-  [[ "${loki_port}" == "${LOKI_URL}" ]] && loki_port="3100"  # no port in URL
+  # If sed didn't strip anything (no port in URL), fall back to 3100
+  [[ "${loki_port}" == "${LOKI_URL}" ]] && loki_port="3100"
+  [[ -n "${host_override}" ]] && loki_host="${host_override}"
 
   mkdir -p /etc/fluent-bit
   cat > /etc/fluent-bit/fluent-bit.conf <<EOF
@@ -404,26 +516,28 @@ EOF
     Auto_Kubernetes_Labels Off
 EOF
 
-  # Copy parsers from repo if available, else write minimal version
   if [[ -f "${INSTALL_DIR}/Deployment/fluent-bit-parsers.conf" ]]; then
     cp "${INSTALL_DIR}/Deployment/fluent-bit-parsers.conf" /etc/fluent-bit/parsers.conf
   else
-    cat > /etc/fluent-bit/parsers.conf <<'EOF'
+    cat > /etc/fluent-bit/parsers.conf <<'PARSERS'
 [PARSER]
     Name   json
     Format json
-EOF
+PARSERS
   fi
+  ok "Fluent Bit config written → ${loki_host}:${loki_port}"
+}
 
-  # Enable service
+_enable_fluent_bit() {
   if systemctl is-active --quiet fluent-bit 2>/dev/null; then
     systemctl restart fluent-bit
+    ok "Fluent Bit restarted."
   else
     systemctl daemon-reload
-    systemctl enable --now fluent-bit 2>/dev/null || \
-      warn "Could not enable fluent-bit service. Start it manually: systemctl start fluent-bit"
+    systemctl enable --now fluent-bit 2>/dev/null \
+      && ok "Fluent Bit enabled and started." \
+      || warn "Could not enable fluent-bit service. Start manually: systemctl start fluent-bit"
   fi
-  ok "Fluent Bit configured → forwarding errors/warnings to ${LOKI_URL}"
 }
 
 # ─── LLM ─────────────────────────────────────────────────────────────────────
