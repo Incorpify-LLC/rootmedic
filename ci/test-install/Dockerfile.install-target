@@ -1,0 +1,23 @@
+# Ubuntu container that mimics a fresh Linux machine.
+# Systemd is stubbed out so the installer can run inside Docker.
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update -qq && apt-get install -y -qq \
+    curl git python3 python3-venv python3-pip jq ca-certificates \
+    gnupg lsb-release wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Stub out systemctl so the installer doesn't fail trying to manage services.
+# Real service management is not possible inside a standard Docker container.
+COPY stubs/systemctl.sh /usr/local/bin/systemctl
+RUN chmod +x /usr/local/bin/systemctl
+
+# Stub out gpg dearmor (may not be available in minimal images)
+RUN command -v gpg >/dev/null || (apt-get update -qq && apt-get install -y -qq gnupg)
+
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
