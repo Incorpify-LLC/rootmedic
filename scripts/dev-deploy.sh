@@ -24,8 +24,7 @@ TARGET="${TARGET:-sanjayu@192.168.2.177}"
 LLM_URL="${LLM_URL:-http://192.168.2.112:11434}"
 MODEL="${MODEL:-llama3.2}"
 REMOTE_DIR="/home/sanjayu"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # repo's scripts/
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"                  # repo root (install.sh lives here)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # repo's scripts/ — all scripts live here
 SSH_OPTS="-o ServerAliveInterval=15 -o ServerAliveCountMax=20 -o ConnectTimeout=10"
 
 REMOTE_INSTALL=0
@@ -65,7 +64,7 @@ ok "Key auth OK."
 # ─── SCP ─────────────────────────────────────────────────────────────────────
 step "Uploading scripts to ${TARGET}:${REMOTE_DIR}/ ..."
 scp ${SSH_OPTS} \
-  "${REPO_ROOT}/install.sh" \
+  "${SCRIPT_DIR}/install.sh" \
   "${SCRIPT_DIR}/cleanup.sh" \
   "${SCRIPT_DIR}/verify_install.sh" \
   "${TARGET}:${REMOTE_DIR}/"

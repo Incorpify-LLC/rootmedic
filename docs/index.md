@@ -5,7 +5,7 @@ RootMedic is an autonomous AI medic for Linux systems. It reads your logs, diagn
 ## Quickstart
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Incorpify-LLC/rootmedic/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Incorpify-LLC/rootmedic/main/scripts/install.sh | sudo bash
 ```
 
 The installer will walk you through every step interactively.

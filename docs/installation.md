@@ -3,7 +3,7 @@
 The installer (`install.sh`) is an interactive Bash script that configures RootMedic end-to-end. Run it as root.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Incorpify-LLC/rootmedic/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Incorpify-LLC/rootmedic/main/scripts/install.sh | sudo bash
 ```
 
 ## What it installs and where
@@ -122,7 +122,7 @@ sudo ROOTMEDIC_NON_INTERACTIVE=1 \
      LITELLM_MODEL=mock-model \
      LITELLM_API_KEY=ci-key \
      START_LOKI_IF_DOWN=0 \
-     bash /opt/rootmedic/install.sh
+     bash /opt/rootmedic/scripts/install.sh
 ```
 
 All prompts are skipped. Defaults are used for anything not specified.

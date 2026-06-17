@@ -2,7 +2,7 @@
 # RootMedic installer — autonomous AI medic for Linux systems.
 #
 # Usage (interactive):
-#   curl -fsSL https://raw.githubusercontent.com/Incorpify-LLC/rootmedic/main/install.sh | sudo bash
+#   curl -fsSL https://raw.githubusercontent.com/Incorpify-LLC/rootmedic/main/scripts/install.sh | sudo bash
 #
 # Usage (non-interactive / CI):
 #   sudo ROOTMEDIC_NON_INTERACTIVE=1 \
@@ -11,7 +11,7 @@
 #        LITELLM_BASE_URL=https://api.openai.com \
 #        LITELLM_MODEL=gpt-4o-mini \
 #        LITELLM_API_KEY=sk-... \
-#        bash install.sh
+#        bash scripts/install.sh
 #
 # Environment overrides (all optional):
 #   ROOTMEDIC_NON_INTERACTIVE  Set to 1 to skip all prompts (uses defaults/env vars)
@@ -154,7 +154,7 @@ EOF
 }
 
 require_root() {
-  [[ $EUID -eq 0 ]] || die "Run as root:  sudo bash install.sh   (or curl ... | sudo bash)"
+  [[ $EUID -eq 0 ]] || die "Run as root:  sudo bash scripts/install.sh   (or curl ... | sudo bash)"
 }
 
 require_linux() {

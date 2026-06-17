@@ -52,7 +52,7 @@ LITELLM_API_KEY="${LITELLM_API_KEY}" \
 START_LOKI_IF_DOWN=0 \
 INSTALL_DIR="${INSTALL_DIR}" \
 ROOTMEDIC_REPO="file://${REPO_DIR}" \
-  bash "${INSTALL_DIR}/install.sh"
+  bash "${INSTALL_DIR}/scripts/install.sh"
 
 echo
 echo "=== Assertions ==="

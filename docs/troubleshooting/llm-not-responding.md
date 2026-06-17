@@ -130,4 +130,4 @@ systemctl restart rootmedic
 journalctl -u rootmedic -f
 ```
 
-Or re-run the full installer: `sudo bash /opt/rootmedic/install.sh`
+Or re-run the full installer: `sudo bash /opt/rootmedic/scripts/install.sh`

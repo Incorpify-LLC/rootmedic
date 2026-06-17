@@ -125,7 +125,7 @@ grep http_listen /etc/loki/config.yaml
 Re-run the installer from the beginning:
 
 ```bash
-sudo bash /opt/rootmedic/install.sh
+sudo bash /opt/rootmedic/scripts/install.sh
 ```
 
 Or if you only want to re-run the verification:

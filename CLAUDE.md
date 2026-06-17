@@ -111,19 +111,21 @@ python demo.py --no-stack
 
 Scenarios: `service_crash`, `oom_kill`, `disk_full`, `connection_refused`. Set `DEMO_FORCE_APPLY=1` as an environment variable to trigger apply without the `--force-apply` flag.
 
-### Operator & developer scripts
+### Operator & developer scripts (`scripts/`)
 
-- **`install.sh`** (repo **root** — kept there so the public `curl … | sudo bash` URL stays clean) — production install (below).
+All shell scripts live under `scripts/`:
+
+- **`scripts/install.sh`** — production install (below).
 - **`scripts/verify_install.sh`** — post-install health check + live healing demo: checks every component, injects 3 synthetic faults into Loki, runs the agent, and prints the resulting `remediation.yaml`. Honors `NONINTERACTIVE=1`.
 - **`scripts/cleanup.sh`** — destructive uninstaller (service, config, containers, Fluent Bit). Requires an explicit confirmation token.
-- **`scripts/dev-deploy.sh`** — developer utility that SCPs `install.sh` + the `scripts/` helpers to a test VM. SCP-only by default; `--remote-install` / `--verify` are opt-in.
+- **`scripts/dev-deploy.sh`** — developer utility that SCPs the `scripts/` files to a test VM. SCP-only by default; `--remote-install` / `--verify` are opt-in.
 
-### Production Install (`install.sh`)
+### Production Install (`scripts/install.sh`)
 
 Installs RootMedic as a systemd service on any Linux host:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Incorpify-LLC/rootmedic/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/Incorpify-LLC/rootmedic/main/scripts/install.sh | sudo bash
 # or with API key pre-set:
 LITELLM_API_KEY=sk-... curl ... | sudo -E bash
 ```

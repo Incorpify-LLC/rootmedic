@@ -110,11 +110,11 @@ ansible-playbook -i Deployment/inventory.ini Deployment/alloy-deploy.yml
 ├── create_sample_data.py     # Generates sample data in user_database.db
 ├── linked-data.py            # Linked list demo with SQLite backend
 ├── Modelfile                 # Ollama model definition for local inference
-├── install.sh                # Production install (systemd service + Loki stack) — at root for a clean curl URL
-├── scripts/                  # Operator & developer shell scripts
+├── scripts/                  # All operator & developer shell scripts
+│   ├── install.sh            #   Production install (systemd service + Loki stack)
 │   ├── verify_install.sh     #   Post-install health check + live healing demo
 │   ├── cleanup.sh            #   Destructive uninstaller
-│   └── dev-deploy.sh         #   Push install.sh + helpers to a test VM (developer utility)
+│   └── dev-deploy.sh         #   Push scripts to a test VM (developer utility)
 ├── Deployment/               # Local dev logging stack
 │   ├── docker-compose.yml    #   Loki + Fluent Bit + Grafana
 │   ├── loki-config.yaml      #   Loki server config (7-day retention)

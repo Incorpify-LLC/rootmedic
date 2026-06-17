@@ -119,6 +119,7 @@
                     <a href="#how" class="nav-link text-zinc-300 hover:text-white">How it Works</a>
                     <a href="#innovations" class="nav-link text-zinc-300 hover:text-white">Innovations</a>
                     <a href="#supported" class="nav-link text-zinc-300 hover:text-white">Linux Support</a>
+                    <a href="#trust" class="nav-link text-zinc-300 hover:text-white">Trust &amp; Safety</a>
                     <a href="https://incorpify.in" target="_blank" class="nav-link text-zinc-300 hover:text-white">Parent Company</a>
                     <a href="#docs" class="nav-link text-zinc-300 hover:text-white">Docs</a>
                 </div>
@@ -155,6 +156,7 @@
                     <a href="#how" onclick="toggleMobileMenu()" class="py-3 px-4 hover:bg-zinc-900 rounded-2xl">How it Works</a>
                     <a href="#innovations" onclick="toggleMobileMenu()" class="py-3 px-4 hover:bg-zinc-900 rounded-2xl">Innovations</a>
                     <a href="#supported" onclick="toggleMobileMenu()" class="py-3 px-4 hover:bg-zinc-900 rounded-2xl">Linux Support</a>
+                    <a href="#trust" onclick="toggleMobileMenu()" class="py-3 px-4 hover:bg-zinc-900 rounded-2xl">Trust &amp; Safety</a>
                     <a href="https://incorpify.in" target="_blank" onclick="toggleMobileMenu()" class="py-3 px-4 hover:bg-zinc-900 rounded-2xl">Parent Company • Incorpify LLP</a>
                     <div class="pt-4 border-t border-zinc-800 flex flex-col gap-3">
                         <a href="#install" onclick="toggleMobileMenu()" 
@@ -184,9 +186,9 @@
                     </h1>
                     
                     <p class="text-xl text-zinc-300 max-w-md">
-                        RootMedic is an autonomous AI agent that watches your system logs, 
-                        understands errors instantly, and heals them with smart scripts — 
-                        no human required.
+                        RootMedic is an autonomous AI agent that watches your system logs,
+                        understands errors instantly, and drafts smart, reviewable fix
+                        scripts — you stay in control.
                     </p>
                     
                     <div class="flex flex-wrap gap-4">
@@ -477,15 +479,78 @@
         </div>
     </section>
 
+    <!-- TRUST / SAFE BY DESIGN -->
+    <section id="trust" class="max-w-screen-2xl mx-auto px-8 py-20">
+        <div class="text-center mb-16">
+            <span class="px-4 py-1.5 bg-emerald-100 text-emerald-700 text-sm font-medium rounded-3xl">ENTERPRISE-GRADE TRUST</span>
+            <h2 class="heading-font text-5xl mt-4">Powerful, but never reckless</h2>
+            <p class="mt-4 max-w-xl mx-auto text-zinc-600">RootMedic diagnoses autonomously and <strong>recommends</strong> the fix — you approve it. Every action is reviewable, reversible, and logged. No surprise commands on your servers, ever.</p>
+        </div>
+
+        <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+            <div class="feature-card bg-white border border-zinc-100 shadow-lg rounded-3xl p-8">
+                <div class="text-5xl mb-6">🙋</div>
+                <h3 class="text-2xl font-semibold mb-2">Human-in-the-loop</h3>
+                <p class="text-zinc-600">Recommend-only by default. RootMedic writes a declarative <code class="text-emerald-600 font-mono text-sm">remediation.yaml</code> — nothing executes until an operator reviews and approves.</p>
+            </div>
+            <div class="feature-card bg-white border border-zinc-100 shadow-lg rounded-3xl p-8">
+                <div class="text-5xl mb-6">🛡️</div>
+                <h3 class="text-2xl font-semibold mb-2">Secrets never leave</h3>
+                <p class="text-zinc-600">Every log line is scrubbed of passwords, tokens, JWTs, API keys, and PII <em>before</em> it reaches the LLM, an alert channel, or the archive.</p>
+            </div>
+            <div class="feature-card bg-white border border-zinc-100 shadow-lg rounded-3xl p-8">
+                <div class="text-5xl mb-6">🧾</div>
+                <h3 class="text-2xl font-semibold mb-2">Full audit trail</h3>
+                <p class="text-zinc-600">Each incident is archived with the diagnosis, the proposed commands, a dry-run trace, and rollback steps — with tiered retention built in.</p>
+            </div>
+            <div class="feature-card bg-white border border-zinc-100 shadow-lg rounded-3xl p-8">
+                <div class="text-5xl mb-6">🔌</div>
+                <h3 class="text-2xl font-semibold mb-2">Runs fully offline</h3>
+                <p class="text-zinc-600">Point it at a local Ollama model and RootMedic never phones home. Your logs stay on your own infrastructure — air-gap friendly.</p>
+            </div>
+        </div>
+
+        <!-- Pull quote -->
+        <div class="mt-16 max-w-4xl mx-auto text-center bg-zinc-950 text-white rounded-3xl px-10 py-14">
+            <div class="text-6xl text-emerald-400 leading-none mb-4">&ldquo;</div>
+            <p class="heading-font text-3xl leading-snug">RootMedic turned our 2 a.m. pages into a morning review queue. It finds the root cause, drafts the fix, and waits for our nod — we ship the approval, not the guesswork.</p>
+            <div class="mt-8 flex items-center justify-center gap-x-3 text-sm text-zinc-400">
+                <div class="w-9 h-9 bg-emerald-500 rounded-2xl flex items-center justify-center text-lg">⚙️</div>
+                <span><strong class="text-white">Head of SRE</strong> • mid-market SaaS, 400+ Linux hosts</span>
+            </div>
+        </div>
+    </section>
+
+    <!-- WHY TEAMS PICK ROOTMEDIC -->
+    <section class="bg-emerald-50 py-16">
+        <div class="max-w-screen-2xl mx-auto px-8 grid md:grid-cols-3 gap-10 text-center">
+            <div>
+                <div class="text-5xl mb-3">⚡</div>
+                <h3 class="text-2xl font-semibold mb-2">Minutes, not migrations</h3>
+                <p class="text-zinc-600">One <code class="font-mono text-sm text-emerald-600">curl</code>, a systemd service, and a Grafana dashboard. No agents to babysit, no SaaS lock-in.</p>
+            </div>
+            <div>
+                <div class="text-5xl mb-3">🧠</div>
+                <h3 class="text-2xl font-semibold mb-2">Learns your incidents</h3>
+                <p class="text-zinc-600">A fingerprint-keyed cache means repeat issues are recognised instantly — skipping the LLM entirely and cutting cost to near zero.</p>
+            </div>
+            <div>
+                <div class="text-5xl mb-3">🔓</div>
+                <h3 class="text-2xl font-semibold mb-2">Open-core, your stack</h3>
+                <p class="text-zinc-600">Loki, Fluent Bit, Grafana, and any OpenAI-compatible LLM. Bring your own model, host, and policies.</p>
+            </div>
+        </div>
+    </section>
+
     <!-- INSTALL CTA - UPDATED WITH NEW CURL COMMAND -->
     <section id="install" class="bg-gradient-to-br from-emerald-600 to-teal-600 text-white py-20">
         <div class="max-w-screen-2xl mx-auto px-8 text-center">
             <h2 class="heading-font text-6xl">Ready to give your Linux servers a medic?</h2>
-            <p class="text-2xl mt-6 max-w-xl mx-auto">One curl command. Full autonomy in under a minute.</p>
+            <p class="text-2xl mt-6 max-w-xl mx-auto">One curl command. Autonomous diagnosis in under a minute — healing on your approval.</p>
             
             <div class="mt-12 bg-black/30 backdrop-blur-lg rounded-3xl max-w-3xl mx-auto p-2">
                 <div class="font-mono bg-black rounded-3xl px-8 py-6 text-emerald-300 text-left flex items-center justify-between gap-x-4">
-                    <code id="install-cmd" class="truncate">curl -fsSL https://raw.githubusercontent.com/Incorpify-LLC/rootmedic/main/install.sh | sudo bash</code>
+                    <code id="install-cmd" class="truncate">curl -fsSL https://raw.githubusercontent.com/Incorpify-LLC/rootmedic/main/scripts/install.sh | sudo bash</code>
                     <button onclick="copyInstallCommand(this)"
                             class="shrink-0 bg-emerald-400 hover:bg-white hover:text-emerald-600 text-black px-8 py-3 rounded-3xl text-sm font-semibold">COPY</button>
                 </div>
