@@ -6,20 +6,24 @@ name: CI
 # detects them and actually delivers alerts over Telegram and email, then
 # gate the merge on all of that passing.
 #
-# Verification is deliberately independent of RootMedic's own "send
-# succeeded" return value:
+# Verification:
 #   - Email: polls incorpify-email's GET /alerts/verify, which checks the
-#     real inbound-mail table for the alert that was actually delivered.
-#   - Telegram: polls rootmedic-ci-oracle's GET /verify, backed by a second,
-#     passive "CI Verifier" bot in the same group that observes messages via
-#     its own webhook — independent of the sending bot's own report.
+#     real inbound-mail table for the alert that was actually delivered —
+#     independent of RootMedic's own "send succeeded" return value.
+#   - Telegram: there is no Bot API mechanism for one bot to independently
+#     observe another bot's message (a second "verifier" bot in the same
+#     group never receives it — confirmed empirically, not just undocumented;
+#     this isn't a privacy-mode setting, bots simply don't see other bots'
+#     messages). The most that can be verified is that Telegram's own
+#     sendMessage call reported success, which RootMedic's AlertManager
+#     already logs — same rigor level the existing Slack/webhook channels
+#     get today.
 #
 # Required repo secrets (Settings -> Secrets and variables -> Actions):
 #   TELEGRAM_BOT_TOKEN        - the alert-sending bot's token (from BotFather)
 #   TELEGRAM_CHAT_ID          - the shared "RootMedic CI" group's chat id
 #   ALERT_EMAIL_RELAY_API_KEY - incorpify-email's ALERT_RELAY_API_KEY value
 #   ALERT_EMAIL_TO            - address to send/verify the test alert against
-#   ORACLE_VERIFY_API_KEY     - rootmedic-ci-oracle's VERIFY_API_KEY value
 
 on:
   pull_request:
@@ -30,7 +34,6 @@ permissions:
 
 env:
   ALERT_EMAIL_RELAY_URL: https://incorpify-email.saneax.workers.dev
-  ORACLE_VERIFY_URL: https://rootmedic-ci-oracle.saneax.workers.dev
   INSTALL_DIR: /opt/rootmedic
 
 jobs:
@@ -127,9 +130,11 @@ jobs:
           # Pushes 3 synthetic faults into Loki (OOM kill, EXT4 error, nginx
           # crash) and runs a single recommend-only agent pass — the same
           # script an operator runs post-install, not a CI-specific
-          # reimplementation of fault injection.
+          # reimplementation of fault injection. Captured to a file so the
+          # Telegram-verify step below can grep AlertManager's own printed
+          # per-plugin status line out of it.
           sudo NONINTERACTIVE=1 INSTALL_DIR="$INSTALL_DIR" \
-            bash "$INSTALL_DIR/scripts/verify_install.sh"
+            bash "$INSTALL_DIR/scripts/verify_install.sh" 2>&1 | tee /tmp/verify_install_output.log
 
       - name: Confirm a recommendation was produced
         run: |
@@ -156,22 +161,14 @@ jobs:
           done
           echo "No email alert arrived within the wait window." && exit 1
 
-      - name: Verify the Telegram alert actually arrived
-        env:
-          ORACLE_VERIFY_API_KEY: ${{ secrets.ORACLE_VERIFY_API_KEY }}
-          SINCE: ${{ steps.start.outputs.epoch }}
+      - name: Confirm the Telegram alert was actually sent
         run: |
-          for i in $(seq 1 12); do
-            resp=$(curl -fsS "$ORACLE_VERIFY_URL/verify?channel=telegram&since=$SINCE" \
-              -H "Authorization: Bearer $ORACLE_VERIFY_API_KEY")
-            echo "$resp"
-            if echo "$resp" | grep -q '"found":true'; then
-              echo "Telegram alert confirmed."
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "No Telegram alert arrived within the wait window." && exit 1
+          # AlertManager only prints "sent" once Telegram's sendMessage API
+          # itself returned success (alerting.py's send_alert()) — see the
+          # header comment for why this, not an independent oracle, is what
+          # Telegram verification looks like here.
+          grep -q '\[ALERT\]\[telegram\] sent' /tmp/verify_install_output.log
+          echo "Telegram alert confirmed sent."
 
       - name: Clean up
         if: always()
