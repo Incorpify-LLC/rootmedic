@@ -35,7 +35,7 @@ Logs flow from Linux hosts through **Fluent Bit** into Loki (Scenario 1 and 3), 
 - **Agent runtime**: Python 3.13
 - **Alerting**: Slack/webhook/Telegram/email fan-out in `alerting.py` / `alert_plugins.py` (dedup/escalation). Telegram and email are wired into `install.sh`'s `configure_alerts()` step; Slack/webhook are configured directly via `alerts.yml`.
 - **Data**: SQLite (`user_database.db`, `alerts_state.db`)
-- **CI/CD**: Jenkins (`Jenkinsfile`)
+- **CI/CD**: GitHub Actions (`.github/workflows/ci.yml`) gates every PR — installs on a fresh runner, injects fault scenarios, confirms real Telegram + email alerts fire. The Jenkins/Ansible/KVM pipeline (`Jenkinsfile`) still exists but reflects an older, auto-apply architecture and a known-broken VM provisioning step (`ci/KNOWN_ISSUES.md`) — not part of the active PR gate.
 - **Deployment**: Docker Compose / Podman Compose, Ansible
 
 ## Build, Test, and Development Commands
