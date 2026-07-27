@@ -440,22 +440,28 @@ install_fluent_bit() {
   if command -v apt-get >/dev/null; then
     curl -fsSL https://packages.fluentbit.io/fluentbit.key \
       | gpg --dearmor -o /usr/share/keyrings/fluentbit-keyring.gpg 2>/dev/null
-    local codename
+    local codename distro_id repo_os
     codename=$(. /etc/os-release && echo "${VERSION_CODENAME:-${UBUNTU_CODENAME:-}}")
+    distro_id=$(. /etc/os-release && echo "${ID:-}")
     [[ -z "${codename}" ]] && codename="jammy"
+    # Fluent Bit hosts separate repo trees for Debian vs Ubuntu — using the
+    # Debian tree's path for an Ubuntu host 404s regardless of codename. The
+    # suite name in the sources line is the codename itself (e.g. "noble
+    # noble main"), not the literal string "stable", which also 404s on
+    # both trees today.
+    repo_os="debian"
+    [[ "${distro_id}" == "ubuntu" ]] && repo_os="ubuntu"
 
     _write_fluentbit_apt_source() {
       cat > /etc/apt/sources.list.d/fluentbit.list <<EOF
-deb [signed-by=/usr/share/keyrings/fluentbit-keyring.gpg] https://packages.fluentbit.io/debian/$1 stable main
+deb [signed-by=/usr/share/keyrings/fluentbit-keyring.gpg] https://packages.fluentbit.io/${repo_os}/$1 $1 main
 EOF
     }
 
     _write_fluentbit_apt_source "${codename}"
-    # Fluent Bit's own repo lags behind new Ubuntu releases by months (e.g. no
-    # 'noble' suite for a long stretch after 24.04 shipped) — a missing Release
-    # file for the exact detected codename doesn't mean the install should fail,
-    # it means falling back to the last LTS codename Fluent Bit does publish.
-    # Packages there are binary-compatible with newer Ubuntu in practice.
+    # Belt-and-suspenders: if Fluent Bit genuinely hasn't published a repo
+    # for this exact codename yet, fall back to the last LTS codename they
+    # do publish rather than failing the whole install outright.
     local apt_update_log
     apt_update_log=$(mktemp)
     if ! DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>"${apt_update_log}"; then
