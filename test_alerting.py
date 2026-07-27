@@ -257,6 +257,17 @@ class TestSlackPluginSend:
         body = mock_post.call_args.kwargs["json"]
         assert "blocks" in body
 
+    @patch("alert_plugins.requests.post")
+    def test_webhook_url_redacted_from_failure_log(self, mock_post, sample_payload, capsys):
+        import requests
+        webhook_url = "https://hooks.slack.com/services/T00/B00/verysecretpath"
+        mock_post.side_effect = requests.RequestException(f"Max retries exceeded with url: {webhook_url}")
+        plugin = SlackPlugin(webhook_url)
+        assert plugin.send(sample_payload) is False
+        printed = capsys.readouterr().out
+        assert webhook_url not in printed
+        assert "REDACTED" in printed
+
 
 class TestWebhookPluginSend:
     @patch("alert_plugins.requests.post")
@@ -267,6 +278,17 @@ class TestWebhookPluginSend:
         kwargs = mock_post.call_args.kwargs
         assert kwargs["json"]["is_escalation"] is True
         assert kwargs["headers"]["X-Key"] == "abc"
+
+    @patch("alert_plugins.requests.post")
+    def test_url_redacted_from_failure_log(self, mock_post, sample_payload, capsys):
+        import requests
+        url = "https://hooks.example.com/T00/B00/verysecretpath"
+        mock_post.side_effect = requests.RequestException(f"Max retries exceeded with url: {url}")
+        plugin = WebhookPlugin(url)
+        assert plugin.send(sample_payload) is False
+        printed = capsys.readouterr().out
+        assert url not in printed
+        assert "REDACTED" in printed
 
 
 class TestTelegramPluginSend:
@@ -298,6 +320,21 @@ class TestTelegramPluginSend:
         mock_post.side_effect = requests.RequestException("boom")
         plugin = TelegramPlugin(bot_token="123:abc", chat_id="-100")
         assert plugin.send(sample_payload) is False
+
+    @patch("alert_plugins.requests.post")
+    def test_bot_token_redacted_from_failure_log(self, mock_post, sample_payload, capsys):
+        # requests embeds the full request URL (bot token included, since the
+        # token is part of the URL path, not a header) in exception messages
+        # — this must never reach journald in plaintext.
+        import requests
+        bot_token = "123456789:AAHsecrettokenvalue"
+        url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+        mock_post.side_effect = requests.RequestException(f"Max retries exceeded with url: {url}")
+        plugin = TelegramPlugin(bot_token=bot_token, chat_id="-100")
+        assert plugin.send(sample_payload) is False
+        printed = capsys.readouterr().out
+        assert bot_token not in printed
+        assert "REDACTED" in printed
 
 
 class TestEmailPluginSend:
@@ -334,6 +371,31 @@ class TestEmailPluginSend:
         mock_post.side_effect = requests.RequestException("boom")
         plugin = EmailPlugin(relay_url="https://x", relay_api_key="k", to="a@b.com")
         assert plugin.send(sample_payload) is False
+
+    @patch("alert_plugins.requests.post")
+    def test_relay_api_key_redacted_from_failure_log(self, mock_post, sample_payload, capsys):
+        import requests
+        relay_api_key = "supersecretrelaykey"
+        mock_post.side_effect = requests.RequestException(f"boom, key was {relay_api_key}")
+        plugin = EmailPlugin(relay_url="https://x", relay_api_key=relay_api_key, to="a@b.com")
+        assert plugin.send(sample_payload) is False
+        printed = capsys.readouterr().out
+        assert relay_api_key not in printed
+        assert "REDACTED" in printed
+
+
+class TestRedact:
+    def test_replaces_every_secret(self):
+        from alert_plugins import _redact
+        assert _redact("token=abc123 and abc123 again", "abc123") == "token=***REDACTED*** and ***REDACTED*** again"
+
+    def test_ignores_none_and_empty_secrets(self):
+        from alert_plugins import _redact
+        assert _redact("nothing to redact here", None, "") == "nothing to redact here"
+
+    def test_multiple_distinct_secrets(self):
+        from alert_plugins import _redact
+        assert _redact("a=1 b=2", "1", "2") == "a=***REDACTED*** b=***REDACTED***"
 
 
 # ---------------------------------------------------------------------------

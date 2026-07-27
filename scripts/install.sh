@@ -886,7 +886,7 @@ configure_alerts() {
   if [[ -n "${TELEGRAM_BOT_TOKEN}" && -n "${TELEGRAM_CHAT_ID}" ]]; then
     ok "Telegram alerting configured via environment."
   elif [[ "${ROOTMEDIC_NON_INTERACTIVE}" != "1" ]] && confirm "Configure Telegram alerts?" "n"; then
-    ask "Telegram bot token" ""
+    ask_secret "Telegram bot token" "${TELEGRAM_BOT_TOKEN}"
     TELEGRAM_BOT_TOKEN="${REPLY}"
     ask "Telegram chat ID" ""
     TELEGRAM_CHAT_ID="${REPLY}"

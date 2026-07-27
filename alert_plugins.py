@@ -64,6 +64,22 @@ class AlertPayload:
         }
 
 
+def _redact(text: str, *secrets: Optional[str]) -> str:
+    """Strip secret substrings out of an error message before it gets logged.
+
+    `requests` embeds the full request URL in exception messages (connection
+    errors, timeouts, HTTP errors) — for Slack/Telegram, the secret IS part
+    of that URL (webhook path / bot token), so printing `str(exc)` as-is on
+    failure would leak it straight into journald. Bearer-header-based
+    secrets (EmailPlugin) aren't affected by this specific mechanism, but
+    every plugin redacts defensively rather than relying on staying that way.
+    """
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "***REDACTED***")
+    return text
+
+
 # ---------------------------------------------------------------------------
 # Base plugin
 # ---------------------------------------------------------------------------
@@ -184,7 +200,7 @@ class SlackPlugin(AlertPlugin):
             response.raise_for_status()
             return True
         except requests.RequestException as exc:
-            print(f"[ALERT][slack] webhook failed: {exc}")
+            print(f"[ALERT][slack] webhook failed: {_redact(str(exc), self.webhook_url)}")
             return False
 
 
@@ -224,7 +240,7 @@ class WebhookPlugin(AlertPlugin):
             response.raise_for_status()
             return True
         except requests.RequestException as exc:
-            print(f"[ALERT][webhook] post failed: {exc}")
+            print(f"[ALERT][webhook] post failed: {_redact(str(exc), self.url)}")
             return False
 
 
@@ -312,7 +328,7 @@ class TelegramPlugin(AlertPlugin):
             response.raise_for_status()
             return True
         except requests.RequestException as exc:
-            print(f"[ALERT][telegram] sendMessage failed: {exc}")
+            print(f"[ALERT][telegram] sendMessage failed: {_redact(str(exc), self.bot_token)}")
             return False
 
 
@@ -369,7 +385,7 @@ class EmailPlugin(AlertPlugin):
             response.raise_for_status()
             return True
         except requests.RequestException as exc:
-            print(f"[ALERT][email] relay post failed: {exc}")
+            print(f"[ALERT][email] relay post failed: {_redact(str(exc), self.relay_api_key)}")
             return False
 
 
