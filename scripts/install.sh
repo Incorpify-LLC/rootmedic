@@ -443,10 +443,34 @@ install_fluent_bit() {
     local codename
     codename=$(. /etc/os-release && echo "${VERSION_CODENAME:-${UBUNTU_CODENAME:-}}")
     [[ -z "${codename}" ]] && codename="jammy"
-    cat > /etc/apt/sources.list.d/fluentbit.list <<EOF
-deb [signed-by=/usr/share/keyrings/fluentbit-keyring.gpg] https://packages.fluentbit.io/debian/${codename} stable main
+
+    _write_fluentbit_apt_source() {
+      cat > /etc/apt/sources.list.d/fluentbit.list <<EOF
+deb [signed-by=/usr/share/keyrings/fluentbit-keyring.gpg] https://packages.fluentbit.io/debian/$1 stable main
 EOF
-    DEBIAN_FRONTEND=noninteractive apt-get update -qq
+    }
+
+    _write_fluentbit_apt_source "${codename}"
+    # Fluent Bit's own repo lags behind new Ubuntu releases by months (e.g. no
+    # 'noble' suite for a long stretch after 24.04 shipped) — a missing Release
+    # file for the exact detected codename doesn't mean the install should fail,
+    # it means falling back to the last LTS codename Fluent Bit does publish.
+    # Packages there are binary-compatible with newer Ubuntu in practice.
+    local apt_update_log
+    apt_update_log=$(mktemp)
+    if ! DEBIAN_FRONTEND=noninteractive apt-get update -qq 2>"${apt_update_log}"; then
+      if grep -q "packages.fluentbit.io" "${apt_update_log}" && [[ "${codename}" != "jammy" ]]; then
+        warn "Fluent Bit has no published repo for '${codename}' yet — falling back to jammy (binary-compatible)."
+        codename="jammy"
+        _write_fluentbit_apt_source "${codename}"
+        DEBIAN_FRONTEND=noninteractive apt-get update -qq
+      else
+        cat "${apt_update_log}" >&2
+        rm -f "${apt_update_log}"
+        return 1
+      fi
+    fi
+    rm -f "${apt_update_log}"
     DEBIAN_FRONTEND=noninteractive apt-get install -y -qq fluent-bit && installed=1
 
   elif command -v dnf >/dev/null; then
