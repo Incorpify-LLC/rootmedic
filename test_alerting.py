@@ -22,7 +22,9 @@ from alerting import (
 from alert_plugins import (
     AlertPayload,
     AlertPlugin,
+    EmailPlugin,
     SlackPlugin,
+    TelegramPlugin,
     WebhookPlugin,
     build_default_plugins,
     build_slack_blocks,
@@ -220,6 +222,30 @@ class TestPluginRegistry:
         config = AlertConfig(slack_webhook_url=None, webhook_url=None)
         assert build_default_plugins(config) == []
 
+    def test_telegram_only(self):
+        config = AlertConfig(telegram_bot_token="123:abc", telegram_chat_id="-100")
+        plugins = build_default_plugins(config)
+        assert any(isinstance(p, TelegramPlugin) for p in plugins)
+        assert len(plugins) == 1
+
+    def test_telegram_requires_both_token_and_chat_id(self):
+        config = AlertConfig(telegram_bot_token="123:abc", telegram_chat_id=None)
+        assert not any(isinstance(p, TelegramPlugin) for p in build_default_plugins(config))
+
+    def test_email_only(self):
+        config = AlertConfig(
+            email_relay_url="https://mail.example.com",
+            email_relay_api_key="key-1",
+            email_to="ops@example.com",
+        )
+        plugins = build_default_plugins(config)
+        assert any(isinstance(p, EmailPlugin) for p in plugins)
+        assert len(plugins) == 1
+
+    def test_email_requires_all_three_fields(self):
+        config = AlertConfig(email_relay_url="https://mail.example.com", email_relay_api_key=None, email_to="ops@example.com")
+        assert not any(isinstance(p, EmailPlugin) for p in build_default_plugins(config))
+
 
 class TestSlackPluginSend:
     @patch("alert_plugins.requests.post")
@@ -241,6 +267,73 @@ class TestWebhookPluginSend:
         kwargs = mock_post.call_args.kwargs
         assert kwargs["json"]["is_escalation"] is True
         assert kwargs["headers"]["X-Key"] == "abc"
+
+
+class TestTelegramPluginSend:
+    def test_not_configured_without_both_fields(self, sample_payload):
+        assert TelegramPlugin(bot_token="123:abc", chat_id=None).is_configured() is False
+        assert TelegramPlugin(bot_token=None, chat_id="-100").is_configured() is False
+
+    @patch("alert_plugins.requests.post")
+    def test_posts_to_bot_api(self, mock_post, sample_payload):
+        mock_post.return_value.raise_for_status.return_value = None
+        plugin = TelegramPlugin(bot_token="123:abc", chat_id="-100")
+        assert plugin.send(sample_payload) is True
+        args, kwargs = mock_post.call_args
+        assert args[0] == "https://api.telegram.org/bot123:abc/sendMessage"
+        assert kwargs["json"]["chat_id"] == "-100"
+        assert "nginx failed to start" in kwargs["json"]["text"]
+
+    @patch("alert_plugins.requests.post")
+    def test_escalation_marked_in_text(self, mock_post, sample_payload):
+        mock_post.return_value.raise_for_status.return_value = None
+        plugin = TelegramPlugin(bot_token="123:abc", chat_id="-100")
+        plugin.send(sample_payload, is_escalation=True)
+        text = mock_post.call_args.kwargs["json"]["text"]
+        assert "ESCALATION" in text
+
+    @patch("alert_plugins.requests.post")
+    def test_returns_false_on_request_exception(self, mock_post, sample_payload):
+        import requests
+        mock_post.side_effect = requests.RequestException("boom")
+        plugin = TelegramPlugin(bot_token="123:abc", chat_id="-100")
+        assert plugin.send(sample_payload) is False
+
+
+class TestEmailPluginSend:
+    def test_not_configured_without_all_fields(self):
+        assert EmailPlugin(relay_url="https://x", relay_api_key=None, to="a@b.com").is_configured() is False
+        assert EmailPlugin(relay_url=None, relay_api_key="k", to="a@b.com").is_configured() is False
+        assert EmailPlugin(relay_url="https://x", relay_api_key="k", to=None).is_configured() is False
+
+    @patch("alert_plugins.requests.post")
+    def test_posts_to_relay_send_endpoint(self, mock_post, sample_payload):
+        mock_post.return_value.raise_for_status.return_value = None
+        plugin = EmailPlugin(
+            relay_url="https://mail.example.com",
+            relay_api_key="key-1",
+            to="ops@example.com",
+        )
+        assert plugin.send(sample_payload) is True
+        args, kwargs = mock_post.call_args
+        assert args[0] == "https://mail.example.com/alerts/send"
+        assert kwargs["json"]["to"] == "ops@example.com"
+        assert "nginx failed to start" in kwargs["json"]["subject"]
+        assert kwargs["headers"]["Authorization"] == "Bearer key-1"
+
+    @patch("alert_plugins.requests.post")
+    def test_relay_url_trailing_slash_stripped(self, mock_post, sample_payload):
+        mock_post.return_value.raise_for_status.return_value = None
+        plugin = EmailPlugin(relay_url="https://mail.example.com/", relay_api_key="k", to="a@b.com")
+        plugin.send(sample_payload)
+        assert mock_post.call_args[0][0] == "https://mail.example.com/alerts/send"
+
+    @patch("alert_plugins.requests.post")
+    def test_returns_false_on_request_exception(self, mock_post, sample_payload):
+        import requests
+        mock_post.side_effect = requests.RequestException("boom")
+        plugin = EmailPlugin(relay_url="https://x", relay_api_key="k", to="a@b.com")
+        assert plugin.send(sample_payload) is False
 
 
 # ---------------------------------------------------------------------------

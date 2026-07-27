@@ -85,9 +85,15 @@ See [LLM not responding](troubleshooting/llm-not-responding.md) if this step fai
 
 ---
 
-### 7. Slack webhook (optional)
+### 7. Alerting (optional)
 
-Asks whether to configure a Slack incoming webhook for alert notifications. Leave blank to skip.
+Asks whether to configure Telegram and/or email alerts. Leave blank to skip.
+Telegram needs a bot token + chat ID; email needs a relay URL, relay API key,
+and recipient address. Both are written to `alerts.yml` in the install
+directory (not `config.yaml`) and can be edited there afterward — see
+`alerting.py`/`alert_plugins.py` for the full set of supported channels
+(Slack and a generic webhook are also supported, but configured directly via
+`alerts.yml` rather than through an installer prompt).
 
 ---
 

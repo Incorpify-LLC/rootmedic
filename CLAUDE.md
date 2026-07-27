@@ -33,7 +33,7 @@ Logs flow from Linux hosts through **Fluent Bit** into Loki (Scenario 1 and 3), 
 - **Visualization**: Grafana (port 3000, login admin/admin)
 - **AI / LLM**: LiteLLM proxy (`https://litellm.saneax.in`, model `smart`) in production; Ollama (local via `Modelfile`) for dev; configured via `/etc/rootmedic/config.yaml` after `install.sh`
 - **Agent runtime**: Python 3.13
-- **Alerting**: Slack/webhook fan-out in `alerting.py` / `alert_plugins.py` (dedup/escalation) — **deferred: not yet wired into `install.sh`; to be built out later**
+- **Alerting**: Slack/webhook/Telegram/email fan-out in `alerting.py` / `alert_plugins.py` (dedup/escalation). Telegram and email are wired into `install.sh`'s `configure_alerts()` step; Slack/webhook are configured directly via `alerts.yml`.
 - **Data**: SQLite (`user_database.db`, `alerts_state.db`)
 - **CI/CD**: Jenkins (`Jenkinsfile`)
 - **Deployment**: Docker Compose / Podman Compose, Ansible
@@ -130,7 +130,7 @@ curl -fsSL https://raw.githubusercontent.com/Incorpify-LLC/rootmedic/main/script
 LITELLM_API_KEY=sk-... curl ... | sudo -E bash
 ```
 
-Installs to `/opt/rootmedic`, writes config to `/etc/rootmedic/config.yaml` (mode 600), registers a `rootmedic.service` systemd unit, and installs a `/usr/local/bin/rootmedic` CLI shim. Key env overrides: `LITELLM_BASE_URL`, `LITELLM_MODEL`, `INSTALL_DIR`. Verify afterward with `sudo bash /opt/rootmedic/scripts/verify_install.sh`. **Alerting (Slack/webhook) is deferred** — the installer no longer prompts for it.
+Installs to `/opt/rootmedic`, writes config to `/etc/rootmedic/config.yaml` (mode 600), writes alert config to `/opt/rootmedic/alerts.yml` (mode 600), registers a `rootmedic.service` systemd unit, and installs a `/usr/local/bin/rootmedic` CLI shim. Key env overrides: `LITELLM_BASE_URL`, `LITELLM_MODEL`, `INSTALL_DIR`, `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`, `ALERT_EMAIL_RELAY_URL`/`ALERT_EMAIL_RELAY_API_KEY`/`ALERT_EMAIL_TO`. Verify afterward with `sudo bash /opt/rootmedic/scripts/verify_install.sh`. Slack/webhook alerting is still configured directly via `alerts.yml` rather than an installer prompt.
 
 ### Ollama Model (optional, for local LLM)
 
@@ -159,9 +159,9 @@ ollama create rootmedic -f Modelfile
   2. **VALIDATED** — occurrence count past the gate; attaches a dry-run trace.
   Neither tier auto-applies. `apply(plan)` is the only path that actually runs subprocess and is intended to be invoked from a CLI/web UI after explicit operator approval; it owns the snapshot + rollback logic.
 
-- **`alert_plugins.py`** — `AlertPlugin` base class, `SlackPlugin`, `WebhookPlugin`, and `build_default_plugins(config)` registry. Adding a new channel (email, IRC, PagerDuty) is a self-contained subclass.
+- **`alert_plugins.py`** — `AlertPlugin` base class, `SlackPlugin`, `WebhookPlugin`, `TelegramPlugin`, `EmailPlugin`, and `build_default_plugins(config)` registry. Adding a new channel (IRC, PagerDuty, ...) is a self-contained subclass. `EmailPlugin` is relay-agnostic — it POSTs `{to, subject, text}` with a bearer key to any HTTP relay configured via `email_relay_url`; this repo's own relay is a small addition to the `incorpify-email` Cloudflare Worker (`POST /alerts/send`).
 
-- **`alerting.py`** — `AlertManager` plus SQLite-backed dedup state (`alerts_state.db`). Fans every alert out to every configured plugin; failures in one plugin do not block the others. Configured via `alerts.yml` (`slack_webhook_url`, `webhook_url`, `webhook_headers`, `dedup_window_minutes`, `escalation_after_minutes`, `grafana_base_url`) or the `SLACK_WEBHOOK_URL` / `ALERT_WEBHOOK_URL` environment variables.
+- **`alerting.py`** — `AlertManager` plus SQLite-backed dedup state (`alerts_state.db`). Fans every alert out to every configured plugin; failures in one plugin do not block the others. Configured via `alerts.yml` (`slack_webhook_url`, `webhook_url`, `webhook_headers`, `telegram_bot_token`, `telegram_chat_id`, `email_relay_url`, `email_relay_api_key`, `email_to`, `dedup_window_minutes`, `escalation_after_minutes`, `grafana_base_url`) or the matching `SLACK_WEBHOOK_URL` / `ALERT_WEBHOOK_URL` / `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` / `ALERT_EMAIL_RELAY_URL` / `ALERT_EMAIL_RELAY_API_KEY` / `ALERT_EMAIL_TO` environment variables.
 
 - **`archive.py`** — Per-incident YAML archive under `archive/<client>/<YYYY-MM>/<fp>-<ts>/` (`incident.yaml`, `remediation.yaml`, `dry_run.log`). `prune_archive(tier=)` enforces 30d / 180d / 365d retention windows.
 

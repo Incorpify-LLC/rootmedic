@@ -24,6 +24,11 @@
 #   ROOTMEDIC_BRANCH           Default: main
 #   INSTALL_DIR                Default: /opt/rootmedic
 #   START_LOKI_IF_DOWN         Set to 1 to auto-start Docker stack without prompting
+#   TELEGRAM_BOT_TOKEN         Telegram alerting (both this and CHAT_ID must be set)
+#   TELEGRAM_CHAT_ID           Telegram alerting
+#   ALERT_EMAIL_RELAY_URL      Email alerting (all three must be set)
+#   ALERT_EMAIL_RELAY_API_KEY  Email alerting
+#   ALERT_EMAIL_TO             Email alerting
 set -euo pipefail
 
 # ─── Defaults ────────────────────────────────────────────────────────────────
@@ -38,6 +43,11 @@ INSTALL_DIR="${INSTALL_DIR:-/opt/rootmedic}"
 ROOTMEDIC_NON_INTERACTIVE="${ROOTMEDIC_NON_INTERACTIVE:-0}"
 START_LOKI_IF_DOWN="${START_LOKI_IF_DOWN:-0}"
 FLUENT_BIT_VIA_COMPOSE=0   # set to 1 when compose stack starts Fluent Bit for us
+TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-}"
+ALERT_EMAIL_RELAY_URL="${ALERT_EMAIL_RELAY_URL:-}"
+ALERT_EMAIL_RELAY_API_KEY="${ALERT_EMAIL_RELAY_API_KEY:-}"
+ALERT_EMAIL_TO="${ALERT_EMAIL_TO:-}"
 
 CONFIG_DIR="/etc/rootmedic"
 CONFIG_FILE="${CONFIG_DIR}/config.yaml"
@@ -866,10 +876,37 @@ configure_llm() {
 }
 
 configure_alerts() {
-  # Alerting (Slack / webhook fan-out) is deferred to a later release. The
-  # alerting.py / alert_plugins.py modules ship with the agent but are not wired
-  # into the installer yet, so there is nothing to prompt for here.
-  :
+  echo
+  echo -e "${BOLD}── Alerting Configuration (optional) ────────────────────────────${RESET}"
+
+  # Slack/webhook are configured entirely via alerts.yml/env post-install (see
+  # docs) — this step only covers Telegram and email, which the installer can
+  # meaningfully prompt for.
+
+  if [[ -n "${TELEGRAM_BOT_TOKEN}" && -n "${TELEGRAM_CHAT_ID}" ]]; then
+    ok "Telegram alerting configured via environment."
+  elif [[ "${ROOTMEDIC_NON_INTERACTIVE}" != "1" ]] && confirm "Configure Telegram alerts?" "n"; then
+    ask "Telegram bot token" ""
+    TELEGRAM_BOT_TOKEN="${REPLY}"
+    ask "Telegram chat ID" ""
+    TELEGRAM_CHAT_ID="${REPLY}"
+  fi
+
+  if [[ -n "${ALERT_EMAIL_RELAY_URL}" && -n "${ALERT_EMAIL_RELAY_API_KEY}" && -n "${ALERT_EMAIL_TO}" ]]; then
+    ok "Email alerting configured via environment."
+  elif [[ "${ROOTMEDIC_NON_INTERACTIVE}" != "1" ]] && confirm "Configure email alerts?" "n"; then
+    ask "Email relay URL (e.g. https://mail.example.com)" ""
+    ALERT_EMAIL_RELAY_URL="${REPLY}"
+    ask_secret "Email relay API key" "${ALERT_EMAIL_RELAY_API_KEY}"
+    ALERT_EMAIL_RELAY_API_KEY="${REPLY}"
+    ask "Alert recipient email address" ""
+    ALERT_EMAIL_TO="${REPLY}"
+  fi
+
+  if [[ -z "${TELEGRAM_BOT_TOKEN}" && -z "${ALERT_EMAIL_RELAY_URL}" ]]; then
+    warn "No Telegram/email alerting configured. remediation.yaml will still be" \
+         "written; edit ${INSTALL_DIR}/alerts.yml to add channels later."
+  fi
 }
 
 # ─── Write artefacts ──────────────────────────────────────────────────────────
@@ -889,17 +926,41 @@ loki_url: "${LOKI_URL}/loki/api/v1/query_range"
 
 grafana_base_url: "http://localhost:3000"
 
-# Alerting (Slack / webhook fan-out) is deferred — to be wired in a later release.
-# alerting.py reads these keys when present; left blank for now.
-#   slack_webhook_url: ""
-#   dedup_window_minutes: 15
-#   escalation_after_minutes: 30
+# Alerting lives in a separate file: ${INSTALL_DIR}/alerts.yml (alerting.py
+# reads it relative to the CWD the CLI shim cd's into, not this file).
 
 # Webhook receiver (cloud/Datadog complement mode — not started by default)
 webhook_receiver_port: 9876
 EOF
   chmod 600 "${CONFIG_FILE}"
   ok "Config written (${CONFIG_FILE}, mode 600)."
+}
+
+write_alerts_config() {
+  log "Writing alert config to ${INSTALL_DIR}/alerts.yml..."
+  umask 077
+  cat > "${INSTALL_DIR}/alerts.yml" <<EOF
+# RootMedic alerting configuration — written by install.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ)
+# Read by alerting.py (AlertConfig.load()), relative to the agent's working
+# directory (${INSTALL_DIR}). Env vars of the same name override these values
+# at runtime — see alerting.py for the full list.
+# Edit and restart rootmedic.service to apply changes.
+
+slack_webhook_url: ""
+webhook_url: ""
+
+telegram_bot_token: "${TELEGRAM_BOT_TOKEN}"
+telegram_chat_id: "${TELEGRAM_CHAT_ID}"
+
+email_relay_url: "${ALERT_EMAIL_RELAY_URL}"
+email_relay_api_key: "${ALERT_EMAIL_RELAY_API_KEY}"
+email_to: "${ALERT_EMAIL_TO}"
+
+dedup_window_minutes: 15
+escalation_after_minutes: 30
+EOF
+  chmod 600 "${INSTALL_DIR}/alerts.yml"
+  ok "Alert config written (${INSTALL_DIR}/alerts.yml, mode 600)."
 }
 
 write_cli_shim() {
@@ -1014,6 +1075,7 @@ main() {
 
   # Phase 3: Write and start
   write_config
+  write_alerts_config
   write_cli_shim
   write_systemd_unit
 

@@ -49,6 +49,11 @@ class AlertConfig:
     slack_webhook_url: Optional[str] = None
     webhook_url: Optional[str] = None
     webhook_headers: Optional[dict[str, str]] = None
+    telegram_bot_token: Optional[str] = None
+    telegram_chat_id: Optional[str] = None
+    email_relay_url: Optional[str] = None
+    email_relay_api_key: Optional[str] = None
+    email_to: Optional[str] = None
     dedup_window_minutes: int = DEFAULT_DEDUP_WINDOW_MINUTES
     escalation_after_minutes: int = DEFAULT_ESCALATION_AFTER_MINUTES
     grafana_base_url: str = DEFAULT_GRAFANA_BASE_URL
@@ -77,6 +82,26 @@ class AlertConfig:
             os.environ.get("ALERT_WEBHOOK_URL")
             or config.get("webhook_url")
         )
+        config["telegram_bot_token"] = (
+            os.environ.get("TELEGRAM_BOT_TOKEN")
+            or config.get("telegram_bot_token")
+        )
+        config["telegram_chat_id"] = (
+            os.environ.get("TELEGRAM_CHAT_ID")
+            or config.get("telegram_chat_id")
+        )
+        config["email_relay_url"] = (
+            os.environ.get("ALERT_EMAIL_RELAY_URL")
+            or config.get("email_relay_url")
+        )
+        config["email_relay_api_key"] = (
+            os.environ.get("ALERT_EMAIL_RELAY_API_KEY")
+            or config.get("email_relay_api_key")
+        )
+        config["email_to"] = (
+            os.environ.get("ALERT_EMAIL_TO")
+            or config.get("email_to")
+        )
         config["grafana_base_url"] = (
             os.environ.get("GRAFANA_BASE_URL")
             or config.get("grafana_base_url", DEFAULT_GRAFANA_BASE_URL)
@@ -92,6 +117,11 @@ class AlertConfig:
             slack_webhook_url=config.get("slack_webhook_url"),
             webhook_url=config.get("webhook_url"),
             webhook_headers=webhook_headers,
+            telegram_bot_token=config.get("telegram_bot_token"),
+            telegram_chat_id=config.get("telegram_chat_id"),
+            email_relay_url=config.get("email_relay_url"),
+            email_relay_api_key=config.get("email_relay_api_key"),
+            email_to=config.get("email_to"),
             dedup_window_minutes=int(config.get("dedup_window_minutes", DEFAULT_DEDUP_WINDOW_MINUTES)),
             escalation_after_minutes=int(config.get("escalation_after_minutes", DEFAULT_ESCALATION_AFTER_MINUTES)),
             grafana_base_url=config.get("grafana_base_url", DEFAULT_GRAFANA_BASE_URL),
@@ -321,13 +351,19 @@ if __name__ == "__main__":
         print("Current Alert Configuration:")
         print(f"  Slack Webhook : {'configured' if config.slack_webhook_url else 'NOT SET'}")
         print(f"  Generic Webhook: {'configured' if config.webhook_url else 'NOT SET'}")
+        print(f"  Telegram      : {'configured' if config.telegram_bot_token and config.telegram_chat_id else 'NOT SET'}")
+        print(f"  Email Relay   : {'configured' if config.email_relay_url and config.email_relay_api_key and config.email_to else 'NOT SET'}")
         print(f"  Dedup Window  : {config.dedup_window_minutes} minutes")
         print(f"  Escalation    : {config.escalation_after_minutes} minutes")
         print(f"  Grafana Base  : {config.grafana_base_url}")
     elif args.test:
         manager = AlertManager(config)
         if not manager.plugins:
-            print("Error: no alert plugins configured (set SLACK_WEBHOOK_URL or ALERT_WEBHOOK_URL)")
+            print(
+                "Error: no alert plugins configured (set SLACK_WEBHOOK_URL, "
+                "ALERT_WEBHOOK_URL, TELEGRAM_BOT_TOKEN+TELEGRAM_CHAT_ID, or "
+                "ALERT_EMAIL_RELAY_URL+ALERT_EMAIL_RELAY_API_KEY+ALERT_EMAIL_TO)"
+            )
             exit(1)
         success = manager.send_test_alert()
         exit(0 if success else 1)
